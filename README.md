@@ -88,7 +88,7 @@ Use the exact distro name from this output in the GUI `WSL Distro` field.
 wsl -d Ubuntu -e bash -lc "sudo apt update && sudo apt install -y openssh-client sshpass x11-apps"
 ```
 
-## X Server Setup (Important)
+## X Server Setup
 
 The app builds this in WSL before launching remote GUI commands:
 
@@ -98,11 +98,18 @@ export DISPLAY=$(grep nameserver /etc/resolv.conf | awk '{print $2}'):0.0
 
 So your Windows X server must be running and accepting connections on display `:0`.
 
-### Recommended workflow
+### Download and install on Windows
 
-1. Install an X server on Windows (for example VcXsrv or Xming).
-2. Start it before launching `FR3_control_GUI.py`.
-3. If the X server has access control options, allow local/private network connections as needed for your setup.
+1. Download VcXsrv from:
+   - https://github.com/ArcticaProject/vcxsrv/releases
+2. Download the latest installer asset (usually `vcxsrv-64.*.installer.exe`).
+3. Run installer with default options.
+4. Launch `XLaunch` from Start Menu.
+5. In XLaunch, use these typical settings:
+   - Multiple windows
+   - Start no client
+   - Disable access control (common for local WSL/X11 workflows on trusted networks)
+6. Finish and keep VcXsrv running before launching `FR3_control_GUI.py`.
 
 ### Quick X11 validation from WSL
 
