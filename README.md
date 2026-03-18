@@ -1,259 +1,229 @@
 # FR3 Control GUI
 
-Tkinter desktop application for launching and managing FR3 visual servoing and kinesthetic teaching tools from a Windows laptop through WSL Ubuntu to a remote Ubuntu machine over SSH.
+Windows Tkinter GUI to connect to a remote Ubuntu machine and launch FR3 visual-servo and kinesthetic-teaching GUIs through `WSL + ssh -Y` (X11 forwarding).
 
-## Overview
+## What This App Does
 
-The current workflow is:
+`FR3_control_GUI.py` has two paths:
 
-1. Run this Python GUI on the Windows laptop.
-2. The GUI uses `paramiko` for SSH connection testing and remote shell commands.
-3. For GUI-based remote apps, the GUI starts `wsl.exe` and runs `sshpass ssh -Y` from the local WSL Ubuntu distro to the remote Ubuntu computer.
-4. The remote Ubuntu machine launches the FR3 GUIs and displays them back on the laptop through X11 forwarding.
+1. `paramiko` SSH session (for connection test, stop/kill, status, logs).
+2. `wsl.exe` launch path using `sshpass ssh -Y` (for remote GUI windows displayed on your Windows laptop).
 
-This lets the laptop act as the operator station while the FR3-related software stays on the remote Linux machine.
+Remote GUIs are not rendered by Tkinter itself. They are rendered by your Windows X server via X11 forwarding.
 
-## Current Features
+## Repository Files
 
-- SSH login screen with saved default values for host, port, username, and WSL distro
-- Configurable remote repository paths for:
-  - visual servo project
-  - kinesthetic teaching project
-- Configurable launch arguments for:
-  - robot IP
-  - `eMc` config path
-  - visual mode (`1` or `2`)
-- `Test Connection` button
-- `Continue` button to enter the control screen after SSH is established
-- Start, stop, and kill controls for:
-  - visual servoing
-  - kinesthetic teaching GUI
-- Remote status check for PID files and matching processes
-- Last-log viewer for both tools
-- Scrollable log panel inside the app
-- Clean SSH disconnect on exit
+- `FR3_control_GUI.py`: main application
+- `requirements.txt`: Python dependency (`paramiko`)
 
-## Files
+## Prerequisites
 
-- `FR3_control_GUI.py` - main application
-- `requirements.txt` - Python dependency list
+### Windows laptop
 
-## Python Requirements
+- Windows with WSL enabled
+- One Ubuntu distro installed in WSL (default expected name: `Ubuntu`)
+- Python 3.9+ on Windows (with Tkinter available)
+- Network access to remote Ubuntu host
+- An X server running on Windows (for forwarded Linux GUIs)
 
-- Python 3.9 or newer recommended
-- `tkinter` available in the local Python installation
-- packages from `requirements.txt`
+### Local WSL Ubuntu distro
 
-Install the Python dependency with:
-
-```bash
-pip install -r requirements.txt
-```
-
-## System Requirements
-
-### On the Windows Laptop
-
-- Windows with WSL installed
-- A working Ubuntu distro in WSL
-- Python installed on Windows
-- Network access to the remote Ubuntu machine
-- X11 display support for forwarded Linux GUIs
-
-Notes:
-
-- The script currently sets `DISPLAY` inside WSL using `/etc/resolv.conf`, which matches the common X11-on-Windows setup.
-- In many setups this means you should have an X server running on Windows, such as VcXsrv or Xming.
-- If your environment already handles X11 forwarding successfully, keep using that setup.
-
-### On the Local WSL Ubuntu Distro
-
-- `bash`
-- `ssh`
-- `sshpass`
-
-Install the WSL-side tools with:
+Install required tools:
 
 ```bash
 sudo apt update
-sudo apt install openssh-client sshpass -y
+sudo apt install -y openssh-client sshpass x11-apps
 ```
 
-### On the Remote Ubuntu Machine
+`x11-apps` is for quick X11 testing (`xclock`, `xeyes`).
 
-- SSH server reachable from the laptop
-- FR3 repositories already cloned
-- launch scripts available:
+### Remote Ubuntu machine
+
+- SSH server reachable from laptop
+- FR3 repos present
+- Scripts available and executable:
   - `run_visual_servo_combined.sh`
   - `run_gui.sh`
-- ROS environment available at:
+- ROS setup present at `/opt/ros/humble/setup.bash`
 
-```bash
-/opt/ros/humble/setup.bash
+Default repo paths used by GUI:
+
+- `/home/parc/FR3_visual_servo_examples`
+- `/home/parc/franka_kinesthetic_teaching_GUI`
+
+## Installation
+
+### 1. Clone and enter repo (Windows)
+
+```powershell
+git clone <your-repo-url>
+cd FR3_control_GUI
 ```
 
-The current default remote paths in the script are:
+### 2. Install Python dependency (Windows)
 
-```text
-/home/parc/FR3_visual_servo_examples
-/home/parc/franka_kinesthetic_teaching_GUI
+```powershell
+python -m pip install -r requirements.txt
 ```
 
-## WSL Installation Setup
+### 3. Install/confirm WSL + Ubuntu
 
-If WSL is not installed on the laptop yet, install it first.
-
-### 1. Install WSL
-
-Open PowerShell as Administrator and run:
+If WSL is not installed:
 
 ```powershell
 wsl --install
 ```
 
-Then reboot if Windows asks you to.
-
-### 2. Install or Confirm an Ubuntu Distro
-
-List installed distros:
+Check distro names:
 
 ```powershell
 wsl --list --verbose
 ```
 
-If Ubuntu is not installed yet, install one of the Ubuntu distros from Microsoft Store or with:
+Use the exact distro name from this output in the GUI `WSL Distro` field.
+
+### 4. Install WSL-side tools
 
 ```powershell
-wsl --install -d Ubuntu
+wsl -d Ubuntu -e bash -lc "sudo apt update && sudo apt install -y openssh-client sshpass x11-apps"
 ```
 
-### 3. Complete First-Time Ubuntu Setup
+## X Server Setup (Important)
 
-Launch Ubuntu and create your Linux username/password when prompted.
-
-Update packages:
+The app builds this in WSL before launching remote GUI commands:
 
 ```bash
-sudo apt update && sudo apt upgrade -y
+export DISPLAY=$(grep nameserver /etc/resolv.conf | awk '{print $2}'):0.0
 ```
 
-### 4. Install SSH Tools in WSL
+So your Windows X server must be running and accepting connections on display `:0`.
 
-Inside the WSL Ubuntu terminal:
+### Recommended workflow
 
-```bash
-sudo apt update
-sudo apt install openssh-client sshpass -y
+1. Install an X server on Windows (for example VcXsrv or Xming).
+2. Start it before launching `FR3_control_GUI.py`.
+3. If the X server has access control options, allow local/private network connections as needed for your setup.
+
+### Quick X11 validation from WSL
+
+Run:
+
+```powershell
+wsl -d Ubuntu -e bash -lc "export DISPLAY=\$(grep nameserver /etc/resolv.conf | awk '{print \$2}'):0.0; xclock"
 ```
 
-### 5. Prepare X11 Display Support
+If `xclock` appears on Windows, local X11 path works.
 
-Because the script uses `ssh -Y` and sets `DISPLAY`, make sure your laptop can display forwarded Linux GUIs.
+### End-to-end SSH X11 validation
 
-Typical setup:
+Run:
 
-- install and run an X server on Windows
-- allow local network access if your X server requires it
-- verify a forwarded Linux GUI can open on the laptop
-
-### 6. Match the WSL Distro Name in the App
-
-The GUI default is:
-
-```text
-Ubuntu
+```powershell
+wsl -d Ubuntu -e bash -lc "export DISPLAY=\$(grep nameserver /etc/resolv.conf | awk '{print \$2}'):0.0; ssh -Y <user>@<remote-host> xclock"
 ```
 
-If your installed distro has a different name, enter that exact name in the `WSL Distro` field.
+If remote `xclock` appears on Windows, your X11 forwarding path is ready for this GUI.
 
-## Remote Launch Behavior
+## Start the Application
 
-### Visual Servo Start
+From this repo on Windows:
 
-The app starts visual servoing by running, on the remote Ubuntu machine:
-
-- `source /opt/ros/humble/setup.bash`
-- exports ROS library path additions
-- changes into the visual servo repository
-- exports `MODE`
-- stores a PID in `/tmp/fr3_visual_servo.pid`
-- runs:
-
-```bash
-./run_visual_servo_combined.sh --ip <robot_ip> --eMc <eMc_path>
-```
-
-### Kinesthetic Start
-
-The app starts kinesthetic teaching by:
-
-- changing into the kinesthetic repository
-- storing a PID in `/tmp/fr3_kinesthetic_gui.pid`
-- running:
-
-```bash
-./run_gui.sh
-```
-
-## Runtime Files Used on the Remote Machine
-
-The script currently uses these files on the remote Ubuntu computer:
-
-```text
-/tmp/fr3_visual_servo.pid
-/tmp/fr3_kinesthetic_gui.pid
-/tmp/fr3_visual_servo.log
-/tmp/fr3_kinesthetic.log
-```
-
-The status and log buttons read from these locations.
-
-## How To Run
-
-From the project folder on Windows:
-
-```bash
+```powershell
 python FR3_control_GUI.py
 ```
 
-## Typical Operator Flow
+## How To Operate the GUI
 
-1. Start your Windows X server if your setup needs one.
-2. Launch the GUI with Python on Windows.
-3. Fill in:
-   - remote host
-   - port
-   - username
-   - password
-   - WSL distro name
-   - remote repository paths
-   - robot IP
-   - `eMc` path
-   - visual mode
-4. Click `Test Connection`.
-5. Confirm the success dialog and `sshpass` check.
-6. Click `Continue`.
-7. Use the control screen to start or stop the FR3 tools.
-8. Use `Check Remote Status` and `Show Last Logs` for troubleshooting.
+### 1) Connection page
 
-## Default Values in the Current Script
+Fill in:
 
-- SSH host: `192.168.0.121`
-- SSH port: `22`
-- SSH username: `parc`
+- `Host`, `Port`, `Username`, `Password`
+- `WSL Distro`
+- `Visual Servo Repo`
+- `Kinesthetic Repo`
+- `Robot IP`
+- `eMc Path`
+- `Visual Mode` (`1` or `2`)
+
+Click `Test Connection`.
+
+What it checks:
+
+- Paramiko SSH login and command execution (`echo SSH_OK && hostname && pwd`)
+- Whether `sshpass` exists in WSL
+
+Then click `Continue` to enter control interface.
+
+### 2) Control page
+
+### Start Visual Servo
+
+Launches from WSL using `sshpass ssh -Y` and runs remotely:
+
+- `source /opt/ros/humble/setup.bash`
+- set ROS library path extension
+- `cd <visual_servo_repo>`
+- `export MODE=<1|2>`
+- write PID to `/tmp/fr3_visual_servo.pid`
+- `exec ./run_visual_servo_combined.sh --ip <robot_ip> --eMc <eMc_path>`
+
+### Start Kinesthetic GUI
+
+Launches from WSL using `sshpass ssh -Y` and runs remotely:
+
+- `source /opt/ros/humble/setup.bash`
+- `cd <kinesthetic_repo>`
+- write PID to `/tmp/fr3_kinesthetic_gui.pid`
+- `exec ./run_gui.sh`
+
+### Stop / Kill buttons
+
+- `Stop` sends `SIGTERM` to PID in corresponding `/tmp/*.pid`
+- `Kill` sends `SIGKILL` to PID in corresponding `/tmp/*.pid`
+
+### Check Remote Status
+
+Shows:
+
+- PID file contents (or missing)
+- matching process lines from `ps -ef`
+
+### Show Last Logs
+
+Reads:
+
+- `/tmp/fr3_visual_servo.log` (tail 30)
+- `/tmp/fr3_kinesthetic.log` (tail 30)
+
+### Other buttons
+
+- `Back`: return to connection/config page
+- `Disconnect`: closes Paramiko SSH session
+- Closing window: disconnects Paramiko session only (does not auto-stop remote processes)
+
+## Runtime Files on Remote
+
+- `/tmp/fr3_visual_servo.pid`
+- `/tmp/fr3_kinesthetic_gui.pid`
+- `/tmp/fr3_visual_servo.log`
+- `/tmp/fr3_kinesthetic.log`
+
+## Defaults in Code
+
+- Host: `192.168.0.121`
+- Port: `22`
+- User: `parc`
 - WSL distro: `Ubuntu`
-- visual servo repo: `/home/parc/FR3_visual_servo_examples`
-- kinesthetic repo: `/home/parc/franka_kinesthetic_teaching_GUI`
-- robot IP: `172.16.0.2`
-- `eMc` path: `config/eMc.yaml`
-- visual mode: `1`
+- Visual repo: `/home/parc/FR3_visual_servo_examples`
+- Kinesthetic repo: `/home/parc/franka_kinesthetic_teaching_GUI`
+- Robot IP: `172.16.0.2`
+- `eMc`: `config/eMc.yaml`
+- Visual mode: `1`
 
-Update these in the GUI if your environment differs.
+## Troubleshooting
 
-## Known Notes
-
-- The app requires `sshpass` in WSL for GUI launch actions.
-- Password-based SSH is currently used for the WSL launch path.
-- `Stop` sends `SIGTERM`; `Kill` sends `SIGKILL`.
-- `Back` returns to the login/config page.
-- Closing the app disconnects the Paramiko SSH client, but it does not automatically stop remote processes that are already running.
+- `WSL does not have sshpass installed yet`: install `sshpass` in the selected distro.
+- Start buttons do nothing / remote GUI never appears: X server is not running or `DISPLAY` route is blocked.
+- SSH test succeeds but remote GUI fails: verify `ssh -Y` path manually with remote `xclock`.
+- Stop/Kill says PID file missing: process may not have created PID file or already exited.
