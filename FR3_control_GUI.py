@@ -310,7 +310,14 @@ class FR3LauncherApp:
         is_ready = self.ssh.connected and self._is_x11_process_running()
         self.continue_button.config(state="normal" if is_ready else "disabled")
         if hasattr(self, "ssh_status_label"):
-            self.ssh_status_label.config(foreground="green" if self.ssh.connected else "red")
+            status = self.status_text.get().strip().lower()
+            if self.ssh.connected:
+                color = "green"
+            elif "connecting" in status:
+                color = "orange"
+            else:
+                color = "red"
+            self.ssh_status_label.config(foreground=color)
 
     def activate_x11(self):
         def worker():
@@ -443,6 +450,7 @@ class FR3LauncherApp:
             return
 
         self.status_text.set("Connecting...")
+        self._update_continue_state()
 
         def worker():
             try:
