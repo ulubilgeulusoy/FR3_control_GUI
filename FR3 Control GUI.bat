@@ -4,6 +4,8 @@ setlocal
 cd /d "%~dp0"
 
 set "SCRIPT=%~dp0FR3_control_GUI.py"
+set "ENV_PYTHONW=C:\Users\Investment\miniconda3\envs\computer_vision\pythonw.exe"
+set "ENV_PYTHON=C:\Users\Investment\miniconda3\envs\computer_vision\python.exe"
 
 if not exist "%SCRIPT%" (
     echo Could not find "%SCRIPT%".
@@ -11,32 +13,21 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-where pyw >nul 2>nul
-if %errorlevel%==0 (
-    pyw -3 "%SCRIPT%"
+if exist "%ENV_PYTHONW%" (
+    "%ENV_PYTHONW%" "%SCRIPT%"
     if %errorlevel%==0 goto :success
 )
 
-where pythonw >nul 2>nul
-if %errorlevel%==0 (
-    pythonw "%SCRIPT%"
+if exist "%ENV_PYTHON%" (
+    "%ENV_PYTHON%" "%SCRIPT%"
     if %errorlevel%==0 goto :success
 )
 
-where py >nul 2>nul
-if %errorlevel%==0 (
-    py -3 "%SCRIPT%"
-    if %errorlevel%==0 goto :success
-)
-
-where python >nul 2>nul
-if %errorlevel%==0 (
-    python "%SCRIPT%"
-    if %errorlevel%==0 goto :success
-)
-
-echo Unable to launch the GUI with Python.
-echo Make sure Python for Windows is installed and registered with `py`, `pyw`, `python`, or `pythonw`.
+echo Unable to launch the GUI with the computer_vision environment.
+echo Expected Python at:
+echo %ENV_PYTHONW%
+echo or
+echo %ENV_PYTHON%
 pause
 exit /b 1
 
