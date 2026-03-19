@@ -56,6 +56,7 @@ Remote GUIs are not rendered by Tkinter itself. They are rendered by your Window
 ## Repository Files
 
 - `FR3_control_GUI.py` - main application
+- `FR3 Control GUI.bat` - Windows double-click launcher for the GUI
 - `requirements.txt` - Python dependency list
 - `config.xlaunch` - saved XLaunch configuration used by `Activate X11`
 
@@ -137,7 +138,21 @@ cd FR3_control_GUI
 python -m pip install -r requirements.txt
 ```
 
-### 3. Install or confirm WSL and Ubuntu
+### 3. Launch the GUI
+
+You can start the app in either of these ways:
+
+```powershell
+python FR3_control_GUI.py
+```
+
+Or on Windows, just double-click:
+
+```text
+FR3 Control GUI.bat
+```
+
+### 4. Install or confirm WSL and Ubuntu
 
 If WSL is not installed yet:
 
@@ -159,7 +174,7 @@ If Ubuntu is not installed yet:
 wsl --install -d Ubuntu
 ```
 
-### 4. Complete first-time Ubuntu setup
+### 5. Complete first-time Ubuntu setup
 
 Launch Ubuntu and create your Linux username/password when prompted.
 
@@ -169,7 +184,7 @@ Update packages:
 sudo apt update && sudo apt upgrade -y
 ```
 
-### 5. Install WSL-side tools
+### 6. Install WSL-side tools
 
 From inside WSL:
 
@@ -184,7 +199,7 @@ Or from Windows PowerShell:
 wsl -d Ubuntu -e bash -lc "sudo apt update && sudo apt install -y openssh-client sshpass x11-apps"
 ```
 
-### 6. Match the WSL distro name in the app
+### 7. Match the WSL distro name in the app
 
 The GUI default is:
 
