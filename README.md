@@ -9,13 +9,22 @@ The current workflow is:
 1. Run this Python GUI on the Windows laptop.
 2. The GUI uses `paramiko` for SSH connection testing and remote shell commands.
 3. For GUI-based remote apps, the GUI starts `wsl.exe` and runs `sshpass ssh -Y` from the local WSL Ubuntu distro to the remote Ubuntu computer.
-4. The remote Ubuntu machine launches the FR3 GUIs and displays them back on the laptop through X11 forwarding.
+4. The GUI can launch the checked-in `config.xlaunch` file to start the Windows X11 server.
+5. The remote Ubuntu machine launches the FR3 GUIs and displays them back on the laptop through X11 forwarding.
 
 This lets the laptop act as the operator station while the FR3-related software stays on the remote Linux machine.
 
 ## Current Features
 
 - SSH login screen with saved default values for host, port, username, and WSL distro
+- Login-screen X11 controls using the repository's `config.xlaunch`
+- `Activate X11` and `Disconnect X11` buttons on the first screen
+- Live X11 status indicator with color feedback:
+  - green when active
+  - red when inactive
+- Live SSH status indicator with color feedback:
+  - green when connected
+  - red when disconnected
 - Configurable remote repository paths for:
   - visual servo project
   - kinesthetic teaching project
@@ -24,19 +33,27 @@ This lets the laptop act as the operator station while the FR3-related software 
   - `eMc` config path
   - visual mode (`1` or `2`)
 - `Test Connection` button
-- `Continue` button to enter the control screen after SSH is established
+- `Disconnect SSH` button on the first screen
+- `Continue` button that only enables when:
+  - SSH is connected
+  - X11 is active
 - Start, stop, and kill controls for:
   - visual servoing
   - kinesthetic teaching GUI
+- Improved remote stop/kill handling:
+  - validates PID files before signaling
+  - removes stale PID files automatically
 - Remote status check for PID files and matching processes
 - Last-log viewer for both tools
 - Scrollable log panel inside the app
 - Clean SSH disconnect on exit
+- Automatic X11 polling so manual VcXsrv closes are detected by the GUI
 
 ## Files
 
 - `FR3_control_GUI.py` - main application
 - `requirements.txt` - Python dependency list
+- `config.xlaunch` - saved XLaunch configuration used by `Activate X11`
 
 ## Python Requirements
 
@@ -58,13 +75,14 @@ pip install -r requirements.txt
 - A working Ubuntu distro in WSL
 - Python installed on Windows
 - Network access to the remote Ubuntu machine
+- VcXsrv/XLaunch installed so `.xlaunch` files can be opened on Windows
 - X11 display support for forwarded Linux GUIs
 
 Notes:
 
 - The script currently sets `DISPLAY` inside WSL using `/etc/resolv.conf`, which matches the common X11-on-Windows setup.
-- In many setups this means you should have an X server running on Windows, such as VcXsrv or Xming.
-- If your environment already handles X11 forwarding successfully, keep using that setup.
+- This repo includes a saved `config.xlaunch` file that the GUI uses when you click `Activate X11`.
+- The GUI checks for `vcxsrv.exe` to decide whether X11 is currently active.
 
 ### On the Local WSL Ubuntu Distro
 
@@ -152,7 +170,9 @@ Because the script uses `ssh -Y` and sets `DISPLAY`, make sure your laptop can d
 
 Typical setup:
 
-- install and run an X server on Windows
+- install VcXsrv/XLaunch on Windows
+- keep `config.xlaunch` in this repo
+- use the GUI's `Activate X11` button to launch it
 - allow local network access if your X server requires it
 - verify a forwarded Linux GUI can open on the laptop
 
@@ -208,6 +228,8 @@ The script currently uses these files on the remote Ubuntu computer:
 
 The status and log buttons read from these locations.
 
+Stop and kill actions now validate the PID first. If the PID file is stale, the GUI removes it and reports that cleanup in the log.
+
 ## How To Run
 
 From the project folder on Windows:
@@ -218,9 +240,8 @@ python FR3_control_GUI.py
 
 ## Typical Operator Flow
 
-1. Start your Windows X server if your setup needs one.
-2. Launch the GUI with Python on Windows.
-3. Fill in:
+1. Launch the GUI with Python on Windows.
+2. Fill in:
    - remote host
    - port
    - username
@@ -230,11 +251,13 @@ python FR3_control_GUI.py
    - robot IP
    - `eMc` path
    - visual mode
-4. Click `Test Connection`.
-5. Confirm the success dialog and `sshpass` check.
-6. Click `Continue`.
-7. Use the control screen to start or stop the FR3 tools.
-8. Use `Check Remote Status` and `Show Last Logs` for troubleshooting.
+3. Click `Activate X11`.
+4. Confirm the X11 status shows `X11 active` in green.
+5. Click `Test Connection`.
+6. Confirm the SSH status shows connected in green and review the `sshpass` check dialog.
+7. Once both SSH and X11 are ready, click `Continue`.
+8. Use the control screen to start or stop the FR3 tools.
+9. Use `Check Remote Status` and `Show Last Logs` for troubleshooting.
 
 ## Default Values in the Current Script
 
@@ -255,5 +278,8 @@ Update these in the GUI if your environment differs.
 - The app requires `sshpass` in WSL for GUI launch actions.
 - Password-based SSH is currently used for the WSL launch path.
 - `Stop` sends `SIGTERM`; `Kill` sends `SIGKILL`.
+- X11 status is checked continuously by polling for `vcxsrv.exe`.
+- If VcXsrv is closed manually in Windows, the GUI should return to `X11 inactive` automatically.
 - `Back` returns to the login/config page.
+- `Continue` is blocked unless both SSH and X11 are ready.
 - Closing the app disconnects the Paramiko SSH client, but it does not automatically stop remote processes that are already running.

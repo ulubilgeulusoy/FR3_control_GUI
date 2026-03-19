@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import subprocess
 import shlex
+import os
 
 import paramiko
 
@@ -69,6 +70,8 @@ class FR3LauncherApp:
         self.root.geometry("950x700")
 
         self.ssh = SSHManager()
+        self.repo_dir = os.path.dirname(os.path.abspath(__file__))
+        self.xlaunch_config_path = os.path.join(self.repo_dir, "config.xlaunch")
 
         # SSH fields
         self.ssh_host = tk.StringVar(value="192.168.0.121")
@@ -95,6 +98,8 @@ class FR3LauncherApp:
         self.kinesthetic_log_file = "/tmp/fr3_kinesthetic.log"
 
         self.status_text = tk.StringVar(value="Not connected")
+        self.x11_status_text = tk.StringVar(value="X11 inactive")
+        self.continue_button = None
 
         self.login_frame = ttk.Frame(self.root, padding=15)
         self.control_frame = ttk.Frame(self.root, padding=15)
@@ -106,6 +111,7 @@ class FR3LauncherApp:
         self._build_control_frame()
 
         self.show_login_frame()
+        self._schedule_x11_status_poll()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def _build_login_frame(self):
@@ -163,9 +169,27 @@ class FR3LauncherApp:
         bottom = ttk.Frame(frame)
         bottom.pack(fill="x")
 
-        ttk.Label(bottom, textvariable=self.status_text).pack(side="left")
+        self.ssh_status_label = ttk.Label(bottom, textvariable=self.status_text, foreground="red")
+        self.ssh_status_label.pack(side="left")
         ttk.Button(bottom, text="Test Connection", command=self.test_connection).pack(side="right", padx=(8, 0))
-        ttk.Button(bottom, text="Continue", command=self.continue_to_controls).pack(side="right")
+        self.continue_button = ttk.Button(bottom, text="Continue", command=self.continue_to_controls)
+        self.continue_button.pack(side="right")
+        ttk.Button(bottom, text="Disconnect SSH", command=self.disconnect_ssh).pack(side="right", padx=(0, 8))
+
+        x11_box = ttk.LabelFrame(frame, text="Display Server", padding=12)
+        x11_box.pack(fill="x", pady=(12, 0))
+
+        x11_buttons = ttk.Frame(x11_box)
+        x11_buttons.pack(anchor="w")
+
+        ttk.Button(x11_buttons, text="Activate X11", command=self.activate_x11).pack(side="left")
+        ttk.Button(x11_buttons, text="Disconnect X11", command=self.deactivate_x11).pack(side="left", padx=(8, 0))
+        ttk.Label(
+            x11_box,
+            text="Starts the saved X11/VcXsrv configuration used so remote GUI windows can open on this computer.",
+        ).pack(anchor="w", pady=(6, 2))
+        self.x11_status_label = ttk.Label(x11_box, textvariable=self.x11_status_text, foreground="red")
+        self.x11_status_label.pack(anchor="w")
 
     def _build_control_frame(self):
         frame = self.control_frame
@@ -216,10 +240,12 @@ class FR3LauncherApp:
     def show_login_frame(self):
         self.control_frame.pack_forget()
         self.login_frame.pack(fill="both", expand=True)
+        self.refresh_x11_status()
 
     def show_control_frame(self):
         self.login_frame.pack_forget()
         self.control_frame.pack(fill="both", expand=True)
+        self.refresh_x11_status()
 
     def append_log(self, text):
         self.log_text.insert("end", text)
@@ -253,6 +279,87 @@ class FR3LauncherApp:
         cmd = ["wsl.exe", "-d", distro, "-e", "bash", "-lc", "command -v sshpass >/dev/null 2>&1"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode == 0
+
+    def _is_x11_process_running(self):
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq vcxsrv.exe"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0 and "vcxsrv.exe" in result.stdout.lower()
+        except Exception:
+            return False
+
+    def refresh_x11_status(self):
+        x11_active = self._is_x11_process_running()
+        self.x11_status_text.set("X11 active" if x11_active else "X11 inactive")
+        if hasattr(self, "x11_status_label"):
+            self.x11_status_label.config(foreground="green" if x11_active else "red")
+        self._update_continue_state()
+
+    def _schedule_x11_status_poll(self):
+        self.refresh_x11_status()
+        self.root.after(2000, self._schedule_x11_status_poll)
+
+    def _update_continue_state(self):
+        if self.continue_button is None:
+            return
+
+        is_ready = self.ssh.connected and self._is_x11_process_running()
+        self.continue_button.config(state="normal" if is_ready else "disabled")
+        if hasattr(self, "ssh_status_label"):
+            self.ssh_status_label.config(foreground="green" if self.ssh.connected else "red")
+
+    def activate_x11(self):
+        def worker():
+            try:
+                if self._is_x11_process_running():
+                    self.root.after(0, lambda: self.x11_status_text.set("X11 active"))
+                    self.root.after(0, lambda: self.append_log("[X11] already active.\n"))
+                    return
+
+                if not os.path.isfile(self.xlaunch_config_path):
+                    self.root.after(0, lambda: messagebox.showerror("X11 Config Missing", f"Could not find:\n{self.xlaunch_config_path}"))
+                    return
+
+                os.startfile(self.xlaunch_config_path)
+                self.root.after(0, lambda: self.append_log(f"[X11] launched config: {self.xlaunch_config_path}\n"))
+                self.root.after(1500, self.refresh_x11_status)
+            except Exception as e:
+                self.root.after(0, lambda: self.x11_status_text.set("X11 inactive"))
+                self.root.after(0, lambda: self.append_log(f"[X11] launch error: {e}\n"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def deactivate_x11(self):
+        def worker():
+            try:
+                if not self._is_x11_process_running():
+                    self.root.after(0, lambda: self.x11_status_text.set("X11 inactive"))
+                    self.root.after(0, lambda: self.append_log("[X11] already inactive.\n"))
+                    return
+
+                result = subprocess.run(
+                    ["taskkill", "/F", "/IM", "vcxsrv.exe"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+                if result.returncode == 0:
+                    self.root.after(0, lambda: self.append_log("[X11] disconnected.\n"))
+                else:
+                    details = (result.stdout or result.stderr).strip() or "taskkill failed"
+                    self.root.after(0, lambda: self.append_log(f"[X11] disconnect error: {details}\n"))
+
+                self.root.after(0, self.refresh_x11_status)
+            except Exception as e:
+                self.root.after(0, lambda: self.append_log(f"[X11] disconnect error: {e}\n"))
+                self.root.after(0, self.refresh_x11_status)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _build_wsl_ssh_gui_command(self, remote_inner_command):
         distro = self.wsl_distro.get().strip()
@@ -299,8 +406,31 @@ class FR3LauncherApp:
                 self.root.after(0, lambda: self.append_log(f"[{label}] exited with code {rc}\n"))
             except Exception as e:
                 self.root.after(0, lambda: self.append_log(f"[{label}] launch error: {e}\n"))
+            finally:
+                setattr(self, proc_attr_name, None)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _build_remote_signal_command(self, pid_file, signal_name, stopped_label, missing_label, stale_label):
+        return (
+            "bash -lc '"
+            f"if [ ! -f {shlex.quote(pid_file)} ]; then "
+            f'echo "{missing_label}"; '
+            "else "
+            f"PID=$(cat {shlex.quote(pid_file)}); "
+            "if [ -z \"$PID\" ]; then "
+            f"rm -f {shlex.quote(pid_file)}; "
+            f'echo "{stale_label}"; '
+            "elif kill -0 \"$PID\" 2>/dev/null; then "
+            f"kill -{signal_name} \"$PID\" && "
+            f"rm -f {shlex.quote(pid_file)} && "
+            f'echo "{stopped_label} PID=$PID"; '
+            "else "
+            f"rm -f {shlex.quote(pid_file)}; "
+            f'echo "{stale_label} PID=$PID"; '
+            "fi; "
+            "fi'"
+        )
 
     def test_connection(self):
         host = self.ssh_host.get().strip()
@@ -330,9 +460,11 @@ class FR3LauncherApp:
                     extra = "\n\nWSL sshpass check passed."
 
                 self.root.after(0, lambda: self.status_text.set(f"Connected to {host} as {user}"))
+                self.root.after(0, self._update_continue_state)
                 self.root.after(0, lambda: messagebox.showinfo("Success", (msg.strip() or "SSH connection successful.") + extra))
             except Exception as e:
                 self.root.after(0, lambda: self.status_text.set("Connection failed"))
+                self.root.after(0, self._update_continue_state)
                 self.root.after(0, lambda: messagebox.showerror("SSH Error", str(e)))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -341,12 +473,17 @@ class FR3LauncherApp:
         if not self.ssh.connected:
             messagebox.showwarning("Not connected", "Please test and establish SSH connection first.")
             return
+        if not self._is_x11_process_running():
+            messagebox.showwarning("X11 inactive", "Please activate X11 before continuing.")
+            self.refresh_x11_status()
+            return
         self.show_control_frame()
         self.append_log("[INFO] Entered control interface.\n")
 
     def disconnect_ssh(self):
         self.ssh.disconnect()
         self.status_text.set("Disconnected")
+        self._update_continue_state()
         self.append_log("[INFO] SSH disconnected.\n")
 
     def start_visual_servo(self):
@@ -370,28 +507,22 @@ class FR3LauncherApp:
         self._launch_wsl_gui_async("Start Visual Servo", cmd, "visual_wsl_proc")
 
     def stop_visual_servo(self):
-        cmd = (
-            "bash -lc '"
-            f"if [ -f {self.visual_pid_file} ]; then "
-            f"PID=$(cat {self.visual_pid_file}); "
-            "kill -TERM $PID && "
-            'echo "VISUAL_SERVO_STOPPED PID=$PID"; '
-            "else "
-            'echo "VISUAL_SERVO_PID_FILE_NOT_FOUND"; '
-            "fi'"
+        cmd = self._build_remote_signal_command(
+            self.visual_pid_file,
+            "TERM",
+            "VISUAL_SERVO_STOPPED",
+            "VISUAL_SERVO_PID_FILE_NOT_FOUND",
+            "VISUAL_SERVO_STALE_PID_FILE_REMOVED",
         )
         self.run_ssh_command_async(cmd, "Stop Visual Servo")
 
     def kill_visual_servo(self):
-        cmd = (
-            "bash -lc '"
-            f"if [ -f {self.visual_pid_file} ]; then "
-            f"PID=$(cat {self.visual_pid_file}); "
-            "kill -KILL $PID && "
-            'echo "VISUAL_SERVO_KILLED PID=$PID"; '
-            "else "
-            'echo "VISUAL_SERVO_PID_FILE_NOT_FOUND"; '
-            "fi'"
+        cmd = self._build_remote_signal_command(
+            self.visual_pid_file,
+            "KILL",
+            "VISUAL_SERVO_KILLED",
+            "VISUAL_SERVO_PID_FILE_NOT_FOUND",
+            "VISUAL_SERVO_STALE_PID_FILE_REMOVED",
         )
         self.run_ssh_command_async(cmd, "Kill Visual Servo")
 
@@ -414,28 +545,22 @@ class FR3LauncherApp:
         self._launch_wsl_gui_async("Start Kinesthetic", cmd, "kinesthetic_wsl_proc")
 
     def stop_kinesthetic(self):
-        cmd = (
-            "bash -lc '"
-            f"if [ -f {self.kinesthetic_pid_file} ]; then "
-            f"PID=$(cat {self.kinesthetic_pid_file}); "
-            "kill -TERM $PID && "
-            'echo "KINESTHETIC_GUI_STOPPED PID=$PID"; '
-            "else "
-            'echo "KINESTHETIC_GUI_PID_FILE_NOT_FOUND"; '
-            "fi'"
+        cmd = self._build_remote_signal_command(
+            self.kinesthetic_pid_file,
+            "TERM",
+            "KINESTHETIC_GUI_STOPPED",
+            "KINESTHETIC_GUI_PID_FILE_NOT_FOUND",
+            "KINESTHETIC_GUI_STALE_PID_FILE_REMOVED",
         )
         self.run_ssh_command_async(cmd, "Stop Kinesthetic")
 
     def kill_kinesthetic(self):
-        cmd = (
-            "bash -lc '"
-            f"if [ -f {self.kinesthetic_pid_file} ]; then "
-            f"PID=$(cat {self.kinesthetic_pid_file}); "
-            "kill -KILL $PID && "
-            'echo "KINESTHETIC_GUI_KILLED PID=$PID"; '
-            "else "
-            'echo "KINESTHETIC_GUI_PID_FILE_NOT_FOUND"; '
-            "fi'"
+        cmd = self._build_remote_signal_command(
+            self.kinesthetic_pid_file,
+            "KILL",
+            "KINESTHETIC_GUI_KILLED",
+            "KINESTHETIC_GUI_PID_FILE_NOT_FOUND",
+            "KINESTHETIC_GUI_STALE_PID_FILE_REMOVED",
         )
         self.run_ssh_command_async(cmd, "Kill Kinesthetic")
 
