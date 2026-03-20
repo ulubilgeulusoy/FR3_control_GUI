@@ -8,6 +8,10 @@ import os
 import paramiko
 
 
+WINDOWS_NO_CONSOLE = os.name == "nt"
+WINDOWS_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 class SSHManager:
     def __init__(self):
         self.client = None
@@ -113,6 +117,17 @@ class FR3LauncherApp:
         self.show_login_frame()
         self._schedule_x11_status_poll()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _subprocess_kwargs(self):
+        if not WINDOWS_NO_CONSOLE:
+            return {}
+
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        return {
+            "startupinfo": startupinfo,
+            "creationflags": WINDOWS_CREATE_NO_WINDOW,
+        }
 
     def _build_login_frame(self):
         frame = self.login_frame
@@ -277,7 +292,7 @@ class FR3LauncherApp:
     def _test_sshpass_in_wsl(self):
         distro = self.wsl_distro.get().strip()
         cmd = ["wsl.exe", "-d", distro, "-e", "bash", "-lc", "command -v sshpass >/dev/null 2>&1"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, **self._subprocess_kwargs())
         return result.returncode == 0
 
     def _is_x11_process_running(self):
@@ -287,6 +302,7 @@ class FR3LauncherApp:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                **self._subprocess_kwargs(),
             )
             return result.returncode == 0 and "vcxsrv.exe" in result.stdout.lower()
         except Exception:
@@ -353,6 +369,7 @@ class FR3LauncherApp:
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    **self._subprocess_kwargs(),
                 )
 
                 if result.returncode == 0:
@@ -401,6 +418,7 @@ class FR3LauncherApp:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    **self._subprocess_kwargs(),
                 )
                 setattr(self, proc_attr_name, proc)
 
