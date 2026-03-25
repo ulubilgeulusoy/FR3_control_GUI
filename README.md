@@ -15,7 +15,8 @@ The current workflow is:
 2. Activate the Windows X server from the GUI using the checked-in `config.xlaunch` file.
 3. Test the SSH connection to the remote Ubuntu machine.
 4. Continue only after both SSH and X11 are ready.
-5. Launch remote FR3 GUIs from the control screen and display them back on the laptop through X11 forwarding.
+5. When you continue into the control screen, the GUI automatically starts `robot_state_publisher.py` on the remote Ubuntu machine so the LSL stream is available.
+6. Launch remote FR3 GUIs from the control screen and display them back on the laptop through X11 forwarding.
 
 Remote GUIs are not rendered by Tkinter itself. They are rendered by your Windows X server via X11 forwarding.
 
@@ -38,10 +39,13 @@ Remote GUIs are not rendered by Tkinter itself. They are rendered by your Window
 - Configurable remote repository paths for:
   - visual servo project
   - kinesthetic teaching project
+  - `robot_state_publisher.py`
 - Configurable launch arguments for:
   - robot IP
   - `eMc` config path
   - visual mode (`1` or `2`)
+- Automatic remote startup of `robot_state_publisher.py` when entering the control screen
+- Automatic remote shutdown of `robot_state_publisher.py` when SSH is disconnected or the GUI closes
 - Start, stop, and kill controls for:
   - visual servoing
   - kinesthetic teaching GUI
@@ -109,6 +113,7 @@ sudo apt install -y openssh-client sshpass x11-apps
 
 - SSH server reachable from the laptop
 - FR3 repositories already cloned
+- this repository cloned on the remote machine if `robot_state_publisher.py` will be launched from it
 - launch scripts available:
   - `run_visual_servo_combined.sh`
   - `run_gui.sh`
@@ -118,10 +123,16 @@ sudo apt install -y openssh-client sshpass x11-apps
 /opt/ros/humble/setup.bash
 ```
 
+- Python packages for the publisher available on the remote machine:
+  - `rclpy`
+  - `sensor_msgs`
+  - `pylsl`
+
 Default remote paths used by the GUI:
 
 - `/home/parc/FR3_visual_servo_examples`
 - `/home/parc/franka_kinesthetic_teaching_GUI`
+- `/home/parc/FR3_control_GUI/robot_state_publisher.py`
 
 ## Installation
 
@@ -299,8 +310,10 @@ The script currently uses these files on the remote Ubuntu computer:
 ```text
 /tmp/fr3_visual_servo.pid
 /tmp/fr3_kinesthetic_gui.pid
+/tmp/fr3_robot_state_publisher.pid
 /tmp/fr3_visual_servo.log
 /tmp/fr3_kinesthetic.log
+/tmp/fr3_robot_state_publisher.log
 ```
 
 The status and log buttons read from these locations.
@@ -332,7 +345,8 @@ python FR3_control_GUI.py
 6. Confirm the SSH status shows connected in green and review the `sshpass` check dialog.
 7. Once both SSH and X11 are ready, click `Continue`.
 8. Use the control screen to start or stop the FR3 tools.
-9. Use `Check Remote Status` and `Show Last Logs` for troubleshooting.
+9. The control screen automatically starts `robot_state_publisher.py` and keeps its log in `/tmp/fr3_robot_state_publisher.log`.
+10. Use `Check Remote Status` and `Show Last Logs` for troubleshooting.
 
 ## Control Screen Behavior
 
@@ -356,6 +370,18 @@ Launches from WSL using `sshpass ssh -Y` and runs remotely:
 - write PID to `/tmp/fr3_kinesthetic_gui.pid`
 - `exec ./run_gui.sh`
 
+### Robot State Publisher
+
+When you enter the control screen with both SSH and X11 ready, the GUI runs this on the remote machine:
+
+- checks whether `/tmp/fr3_robot_state_publisher.pid` already points to a live process
+- removes stale PID files automatically
+- sources ROS 2 from `/opt/ros/humble/setup.bash`
+- starts `python3 <robot_state_publisher.py>` with `nohup`
+- writes logs to `/tmp/fr3_robot_state_publisher.log`
+
+When you disconnect SSH or close the GUI, the app sends `SIGTERM` to the publisher PID if it was started through the tracked PID file.
+
 ### Stop / Kill Buttons
 
 - `Stop` sends `SIGTERM` to the PID in the corresponding `/tmp/*.pid`
@@ -368,6 +394,7 @@ Shows:
 
 - PID file contents, or `missing`
 - matching process lines from `ps -ef`
+- includes `robot_state_publisher.py`
 
 ### Show Last Logs
 
@@ -375,6 +402,7 @@ Reads:
 
 - `/tmp/fr3_visual_servo.log` tail output
 - `/tmp/fr3_kinesthetic.log` tail output
+- `/tmp/fr3_robot_state_publisher.log` tail output
 
 ### Other Buttons
 
@@ -390,6 +418,7 @@ Reads:
 - WSL distro: `Ubuntu`
 - Visual repo: `/home/parc/FR3_visual_servo_examples`
 - Kinesthetic repo: `/home/parc/franka_kinesthetic_teaching_GUI`
+- State publisher: `/home/parc/FR3_control_GUI/robot_state_publisher.py`
 - Robot IP: `172.16.0.2`
 - `eMc`: `config/eMc.yaml`
 - Visual mode: `1`
@@ -401,4 +430,5 @@ Reads:
 - X11 status is checked continuously by polling for `vcxsrv.exe`.
 - If VcXsrv is closed manually in Windows, the GUI should return to `X11 inactive` automatically.
 - `Continue` is blocked unless both SSH and X11 are ready.
-- Closing the app disconnects the Paramiko SSH client, but it does not automatically stop remote processes that are already running.
+- Entering the control screen also assumes the remote machine can run `python3 robot_state_publisher.py` after sourcing ROS 2.
+- Closing the app disconnects the Paramiko SSH client and stops the tracked `robot_state_publisher.py` process, but it does not automatically stop the visual-servo or kinesthetic processes if they are already running.

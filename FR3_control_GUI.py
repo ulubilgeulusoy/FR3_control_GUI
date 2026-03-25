@@ -89,6 +89,7 @@ class FR3LauncherApp:
         # Remote paths
         self.visual_servo_dir = tk.StringVar(value="/home/parc/FR3_visual_servo_examples")
         self.kinesthetic_dir = tk.StringVar(value="/home/parc/franka_kinesthetic_teaching_GUI")
+        self.robot_state_publisher_path = tk.StringVar(value="/home/parc/FR3_control_GUI/robot_state_publisher.py")
 
         # Visual servo args
         self.robot_ip = tk.StringVar(value="172.16.0.2")
@@ -98,8 +99,10 @@ class FR3LauncherApp:
         # PID files and log files on remote machine
         self.visual_pid_file = "/tmp/fr3_visual_servo.pid"
         self.kinesthetic_pid_file = "/tmp/fr3_kinesthetic_gui.pid"
+        self.robot_state_pid_file = "/tmp/fr3_robot_state_publisher.pid"
         self.visual_log_file = "/tmp/fr3_visual_servo.log"
         self.kinesthetic_log_file = "/tmp/fr3_kinesthetic.log"
+        self.robot_state_log_file = "/tmp/fr3_robot_state_publisher.log"
 
         self.status_text = tk.StringVar(value="Not connected")
         self.x11_status_text = tk.StringVar(value="X11 inactive")
@@ -164,20 +167,23 @@ class FR3LauncherApp:
         ttk.Label(remote, text="Kinesthetic Repo").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Entry(remote, textvariable=self.kinesthetic_dir).grid(row=1, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="Robot IP").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Entry(remote, textvariable=self.robot_ip).grid(row=2, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Label(remote, text="State Publisher").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.robot_state_publisher_path).grid(row=2, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="eMc Path").grid(row=3, column=0, sticky="w", pady=5)
-        ttk.Entry(remote, textvariable=self.eMc_path).grid(row=3, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Label(remote, text="Robot IP").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.robot_ip).grid(row=3, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="Visual Mode").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Label(remote, text="eMc Path").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.eMc_path).grid(row=4, column=1, sticky="ew", padx=8, pady=5)
+
+        ttk.Label(remote, text="Visual Mode").grid(row=5, column=0, sticky="w", pady=5)
         ttk.Combobox(
             remote,
             textvariable=self.visual_mode,
             values=["1", "2"],
             state="readonly",
             width=8
-        ).grid(row=4, column=1, sticky="w", padx=8, pady=5)
+        ).grid(row=5, column=1, sticky="w", padx=8, pady=5)
 
         remote.columnconfigure(1, weight=1)
 
@@ -457,6 +463,62 @@ class FR3LauncherApp:
             "fi'"
         )
 
+    def _build_robot_state_start_command(self):
+        publisher_path = shlex.quote(self.robot_state_publisher_path.get().strip())
+
+        return (
+            "bash -lc '"
+            f"PID_FILE={shlex.quote(self.robot_state_pid_file)}; "
+            f"LOG_FILE={shlex.quote(self.robot_state_log_file)}; "
+            f"SCRIPT={publisher_path}; "
+            "if [ ! -f \"$SCRIPT\" ]; then "
+            'echo "ROBOT_STATE_PUBLISHER_SCRIPT_NOT_FOUND"; '
+            "exit 1; "
+            "fi; "
+            "if [ -f \"$PID_FILE\" ]; then "
+            "PID=$(cat \"$PID_FILE\"); "
+            "if [ -n \"$PID\" ] && kill -0 \"$PID\" 2>/dev/null; then "
+            'echo "ROBOT_STATE_PUBLISHER_ALREADY_RUNNING PID=$PID"; '
+            "exit 0; "
+            "fi; "
+            "rm -f \"$PID_FILE\"; "
+            "fi; "
+            "source /opt/ros/humble/setup.bash && "
+            "nohup python3 \"$SCRIPT\" > \"$LOG_FILE\" 2>&1 < /dev/null & "
+            "PID=$!; "
+            "echo \"$PID\" > \"$PID_FILE\"; "
+            "sleep 1; "
+            "if kill -0 \"$PID\" 2>/dev/null; then "
+            'echo "ROBOT_STATE_PUBLISHER_STARTED PID=$PID"; '
+            "else "
+            "rm -f \"$PID_FILE\"; "
+            'echo "ROBOT_STATE_PUBLISHER_FAILED_TO_START"; '
+            "exit 1; "
+            "fi'"
+        )
+
+    def ensure_robot_state_publisher_running(self):
+        if not self.ssh.connected:
+            return
+        self.run_ssh_command_async(self._build_robot_state_start_command(), "Robot State Publisher")
+
+    def _stop_robot_state_publisher_before_disconnect(self):
+        if not self.ssh.connected:
+            return
+
+        cmd = self._build_remote_signal_command(
+            self.robot_state_pid_file,
+            "TERM",
+            "ROBOT_STATE_PUBLISHER_STOPPED",
+            "ROBOT_STATE_PUBLISHER_PID_FILE_NOT_FOUND",
+            "ROBOT_STATE_PUBLISHER_STALE_PID_FILE_REMOVED",
+        )
+
+        try:
+            self.ssh.exec(cmd)
+        except Exception:
+            pass
+
     def test_connection(self):
         host = self.ssh_host.get().strip()
         port = self.ssh_port.get().strip()
@@ -505,8 +567,10 @@ class FR3LauncherApp:
             return
         self.show_control_frame()
         self.append_log("[INFO] Entered control interface.\n")
+        self.ensure_robot_state_publisher_running()
 
     def disconnect_ssh(self):
+        self._stop_robot_state_publisher_before_disconnect()
         self.ssh.disconnect()
         self.status_text.set("Disconnected")
         self._update_continue_state()
@@ -597,8 +661,10 @@ class FR3LauncherApp:
             f'if [ -f {self.visual_pid_file} ]; then cat {self.visual_pid_file}; else echo "missing"; fi; '
             f'echo "--- Kinesthetic PID file ---"; '
             f'if [ -f {self.kinesthetic_pid_file} ]; then cat {self.kinesthetic_pid_file}; else echo "missing"; fi; '
+            f'echo "--- Robot State Publisher PID file ---"; '
+            f'if [ -f {self.robot_state_pid_file} ]; then cat {self.robot_state_pid_file}; else echo "missing"; fi; '
             "echo \"--- Matching processes ---\"; "
-            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|franka_teach|run_gui.sh\" | grep -v grep'"
+            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|franka_teach|run_gui.sh|robot_state_publisher.py\" | grep -v grep'"
         )
         self.run_ssh_command_async(cmd, "Remote Status")
 
@@ -609,12 +675,16 @@ class FR3LauncherApp:
             f'tail -n 30 {self.visual_log_file} 2>/dev/null || echo "No visual servo log"; '
             f'echo ""; '
             f'echo "--- Kinesthetic Log ---"; '
-            f'tail -n 30 {self.kinesthetic_log_file} 2>/dev/null || echo "No kinesthetic log"'
+            f'tail -n 30 {self.kinesthetic_log_file} 2>/dev/null || echo "No kinesthetic log"; '
+            f'echo ""; '
+            f'echo "--- Robot State Publisher Log ---"; '
+            f'tail -n 30 {self.robot_state_log_file} 2>/dev/null || echo "No robot state publisher log"'
             "'"
         )
         self.run_ssh_command_async(cmd, "Last Logs")
 
     def on_close(self):
+        self._stop_robot_state_publisher_before_disconnect()
         self.ssh.disconnect()
         self.root.destroy()
 
