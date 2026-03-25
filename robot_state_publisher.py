@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""
+robot_state_publisher.py
+
+Publishes a simple binary robot-state LSL stream from the Ubuntu robot computer.
+
+Channels:
+    0: visual_servo_active
+    1: kt_active
+    2: arm_moving
+    3: gripper_moving
+
+Current logic:
+- visual_servo_active: 1 if a matching visual-servo process is running
+- kt_active: 1 if a matching kinesthetic-teaching process is running
+- arm_moving: 1 if robot joint velocity norm is above threshold
+- gripper_moving: 1 if gripper joint velocity/position change is above threshold
+
+Notes:
+- This version uses ROS 2 /joint_states for motion detection.
+- You will likely need to adjust process patterns and gripper joint names.
+- LSL timestamps are handled by pylsl / LabRecorder, so no timestamp channel is included.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from pylsl import StreamInfo, StreamOutlet, local_clock
+
+
+# ----------------------------
+# User-tunable settings
+# ----------------------------
+
+STREAM_NAME = "FR3_State"
+STREAM_TYPE = "RobotState"
+STREAM_UID = "fr3_state_binary_v1"
+PUBLISH_RATE_HZ = 50.0
+
+# Process-name patterns used to decide whether the tools are active.
+# Adjust these if your actual process names differ.
+VISUAL_SERVO_PATTERNS = [
+    r"run_visual_servo_combined\.sh",
+    r"FR3_visual_servo_examples",
+    r"visual_servo",
+]
+
+KT_PATTERNS = [
+    r"run_gui\.sh",
+    r"franka_kinesthetic_teaching_GUI",
+    r"kinesthetic",
+]
+
+# Thresholds for binary movement flags
+ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
+GRIPPER_VELOCITY_THRESHOLD = 0.001      # joint velocity threshold
+GRIPPER_POSITION_DELTA_THRESHOLD = 0.0005  # fallback if velocity missing
+
+# If your gripper joint names differ, update these.
+GRIPPER_JOINT_NAME_HINTS = [
+    "finger",
+    "gripper",
+    "leftfinger",
+    "rightfinger",
+    "panda_finger_joint",
+    "fr3_finger_joint",
+]
+
+# Debounce settings to reduce flicker
+REQUIRED_CONSECUTIVE_TRUE = 2
+REQUIRED_CONSECUTIVE_FALSE = 2
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def process_matches_any(patterns: Sequence[str]) -> bool:
+    """
+    Return True if any running process command line matches any regex pattern.
+    Uses 'ps -eo pid,args' to inspect command lines.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,args"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return False
+
+    lines = result.stdout.splitlines()
+    for line in lines:
+        for pattern in patterns:
+            if re.search(pattern, line):
+                return True
+    return False
+
+
+def velocity_norm(values: Sequence[float]) -> float:
+    return math.sqrt(sum(v * v for v in values))
+
+
+def looks_like_gripper_joint(name: str) -> bool:
+    lowered = name.lower()
+    return any(hint in lowered for hint in GRIPPER_JOINT_NAME_HINTS)
+
+
+@dataclass
+class DebouncedFlag:
+    state: int = 0
+    true_count: int = 0
+    false_count: int = 0
+
+    def update(self, raw_value: bool) -> int:
+        if raw_value:
+            self.true_count += 1
+            self.false_count = 0
+            if self.true_count >= REQUIRED_CONSECUTIVE_TRUE:
+                self.state = 1
+        else:
+            self.false_count += 1
+            self.true_count = 0
+            if self.false_count >= REQUIRED_CONSECUTIVE_FALSE:
+                self.state = 0
+        return self.state
+
+
+# ----------------------------
+# ROS / LSL publisher
+# ----------------------------
+
+class RobotStatePublisher(Node):
+    def __init__(self) -> None:
+        super().__init__("robot_state_publisher")
+
+        self.subscription = self.create_subscription(
+            JointState,
+            "/joint_states",
+            self.joint_state_callback,
+            50,
+        )
+
+        # Last observed joint info
+        self.last_joint_names: List[str] = []
+        self.last_positions: Dict[str, float] = {}
+        self.last_velocities: Dict[str, float] = {}
+        self.last_joint_msg_time: Optional[float] = None
+
+        # Debounced states
+        self.visual_servo_flag = DebouncedFlag()
+        self.kt_flag = DebouncedFlag()
+        self.arm_moving_flag = DebouncedFlag()
+        self.gripper_moving_flag = DebouncedFlag()
+
+        # LSL setup
+        info = StreamInfo(
+            STREAM_NAME,
+            STREAM_TYPE,
+            4,                 # 4 binary channels
+            PUBLISH_RATE_HZ,   # nominal sampling rate
+            "int32",
+            STREAM_UID,
+        )
+
+        channels = info.desc().append_child("channels")
+        for label in [
+            "visual_servo_active",
+            "kt_active",
+            "arm_moving",
+            "gripper_moving",
+        ]:
+            ch = channels.append_child("channel")
+            ch.append_child_value("label", label)
+            ch.append_child_value("type", "binary")
+            ch.append_child_value("unit", "0_or_1")
+
+        self.outlet = StreamOutlet(info)
+
+        self.timer = self.create_timer(1.0 / PUBLISH_RATE_HZ, self.publish_sample)
+
+        self.get_logger().info("robot_state_publisher started.")
+        self.get_logger().info(f"Publishing LSL stream: {STREAM_NAME}")
+
+    def joint_state_callback(self, msg: JointState) -> None:
+        now = time.monotonic()
+        self.last_joint_msg_time = now
+
+        self.last_joint_names = list(msg.name)
+
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                self.last_positions[name] = msg.position[i]
+            if i < len(msg.velocity):
+                self.last_velocities[name] = msg.velocity[i]
+
+    def compute_arm_moving_raw(self) -> bool:
+        """
+        Uses non-gripper joint velocities from /joint_states.
+        """
+        if not self.last_joint_names:
+            return False
+
+        arm_vels: List[float] = []
+        for name in self.last_joint_names:
+            if looks_like_gripper_joint(name):
+                continue
+            arm_vels.append(float(self.last_velocities.get(name, 0.0)))
+
+        if not arm_vels:
+            return False
+
+        return velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD
+
+    def compute_gripper_moving_raw(self) -> bool:
+        """
+        Prefers gripper joint velocity if available.
+        Falls back to position-change detection from the latest joint state.
+        """
+        if not self.last_joint_names:
+            return False
+
+        gripper_names = [n for n in self.last_joint_names if looks_like_gripper_joint(n)]
+        if not gripper_names:
+            return False
+
+        # Velocity-based check
+        for name in gripper_names:
+            vel = abs(float(self.last_velocities.get(name, 0.0)))
+            if vel > GRIPPER_VELOCITY_THRESHOLD:
+                return True
+
+        # Position-delta fallback:
+        # if velocity is unavailable or always zero, compare current positions
+        # over a short delay.
+        # This is intentionally simple for v1.
+        current_positions = [float(self.last_positions.get(name, 0.0)) for name in gripper_names]
+        time.sleep(0.005)
+        next_positions = [float(self.last_positions.get(name, 0.0)) for name in gripper_names]
+
+        for p0, p1 in zip(current_positions, next_positions):
+            if abs(p1 - p0) > GRIPPER_POSITION_DELTA_THRESHOLD:
+                return True
+
+        return False
+
+    def publish_sample(self) -> None:
+        visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
+        kt_raw = process_matches_any(KT_PATTERNS)
+        arm_moving_raw = self.compute_arm_moving_raw()
+        gripper_moving_raw = self.compute_gripper_moving_raw()
+
+        visual_servo_active = self.visual_servo_flag.update(visual_servo_raw)
+        kt_active = self.kt_flag.update(kt_raw)
+        arm_moving = self.arm_moving_flag.update(arm_moving_raw)
+        gripper_moving = self.gripper_moving_flag.update(gripper_moving_raw)
+
+        sample = [
+            int(visual_servo_active),
+            int(kt_active),
+            int(arm_moving),
+            int(gripper_moving),
+        ]
+
+        self.outlet.push_sample(sample, local_clock())
+
+    def shutdown(self) -> None:
+        self.get_logger().info("Shutting down robot_state_publisher.")
+
+
+def main() -> None:
+    rclpy.init()
+    node = RobotStatePublisher()
+
+    def _handle_signal(signum, frame):
+        node.get_logger().info(f"Received signal {signum}, shutting down.")
+        node.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    try:
+        rclpy.spin(node)
+    finally:
+        if rclpy.ok():
+            node.shutdown()
+            node.destroy_node()
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
