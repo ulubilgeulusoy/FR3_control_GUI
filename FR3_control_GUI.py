@@ -463,6 +463,43 @@ class FR3LauncherApp:
             "fi'"
         )
 
+    def _build_robot_state_cleanup_command(self):
+        publisher_path = shlex.quote(self.robot_state_publisher_path.get().strip())
+
+        return (
+            "bash -lc '"
+            f"PID_FILE={shlex.quote(self.robot_state_pid_file)}; "
+            f"SCRIPT={publisher_path}; "
+            "STOPPED=0; "
+            "if [ -f \"$PID_FILE\" ]; then "
+            "PID=$(cat \"$PID_FILE\"); "
+            "if [ -n \"$PID\" ] && kill -0 \"$PID\" 2>/dev/null; then "
+            "kill -TERM \"$PID\" 2>/dev/null || true; "
+            "sleep 1; "
+            "if kill -0 \"$PID\" 2>/dev/null; then "
+            "kill -KILL \"$PID\" 2>/dev/null || true; "
+            "fi; "
+            "STOPPED=1; "
+            "fi; "
+            "rm -f \"$PID_FILE\"; "
+            "fi; "
+            "PIDS=$(pgrep -f -- \"$SCRIPT\" || true); "
+            "if [ -n \"$PIDS\" ]; then "
+            "printf \"%s\n\" \"$PIDS\" | xargs -r kill -TERM 2>/dev/null || true; "
+            "sleep 1; "
+            "REMAINING=$(pgrep -f -- \"$SCRIPT\" || true); "
+            "if [ -n \"$REMAINING\" ]; then "
+            "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
+            "fi; "
+            "STOPPED=1; "
+            "fi; "
+            "if [ \"$STOPPED\" -eq 1 ]; then "
+            'echo "ROBOT_STATE_PUBLISHER_CLEANED_UP"; '
+            "else "
+            'echo "ROBOT_STATE_PUBLISHER_NOT_RUNNING"; '
+            "fi'"
+        )
+
     def _build_robot_state_start_command(self):
         publisher_path = shlex.quote(self.robot_state_publisher_path.get().strip())
 
@@ -476,12 +513,24 @@ class FR3LauncherApp:
             "exit 1; "
             "fi; "
             "if [ -f \"$PID_FILE\" ]; then "
-            "PID=$(cat \"$PID_FILE\"); "
-            "if [ -n \"$PID\" ] && kill -0 \"$PID\" 2>/dev/null; then "
-            'echo "ROBOT_STATE_PUBLISHER_ALREADY_RUNNING PID=$PID"; '
-            "exit 0; "
+            "OLD_PID=$(cat \"$PID_FILE\"); "
+            "if [ -n \"$OLD_PID\" ] && kill -0 \"$OLD_PID\" 2>/dev/null; then "
+            "kill -TERM \"$OLD_PID\" 2>/dev/null || true; "
+            "sleep 1; "
+            "if kill -0 \"$OLD_PID\" 2>/dev/null; then "
+            "kill -KILL \"$OLD_PID\" 2>/dev/null || true; "
+            "fi; "
             "fi; "
             "rm -f \"$PID_FILE\"; "
+            "fi; "
+            "EXISTING=$(pgrep -f -- \"$SCRIPT\" || true); "
+            "if [ -n \"$EXISTING\" ]; then "
+            "printf \"%s\n\" \"$EXISTING\" | xargs -r kill -TERM 2>/dev/null || true; "
+            "sleep 1; "
+            "REMAINING=$(pgrep -f -- \"$SCRIPT\" || true); "
+            "if [ -n \"$REMAINING\" ]; then "
+            "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
+            "fi; "
             "fi; "
             "source /opt/ros/humble/setup.bash && "
             "nohup python3 \"$SCRIPT\" > \"$LOG_FILE\" 2>&1 < /dev/null & "
@@ -506,13 +555,7 @@ class FR3LauncherApp:
         if not self.ssh.connected:
             return
 
-        cmd = self._build_remote_signal_command(
-            self.robot_state_pid_file,
-            "TERM",
-            "ROBOT_STATE_PUBLISHER_STOPPED",
-            "ROBOT_STATE_PUBLISHER_PID_FILE_NOT_FOUND",
-            "ROBOT_STATE_PUBLISHER_STALE_PID_FILE_REMOVED",
-        )
+        cmd = self._build_robot_state_cleanup_command()
 
         try:
             self.ssh.exec(cmd)
