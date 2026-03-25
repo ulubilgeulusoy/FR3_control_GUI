@@ -30,7 +30,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
 import rclpy
@@ -59,13 +59,13 @@ VISUAL_SERVO_PATTERNS = [
 KT_PATTERNS = [
     r"run_gui\.sh",
     r"franka_kinesthetic_teaching_GUI",
-    r"kinesthetic",
 ]
 
 # Thresholds for binary movement flags
 ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
 GRIPPER_VELOCITY_THRESHOLD = 0.001      # joint velocity threshold
 GRIPPER_POSITION_DELTA_THRESHOLD = 0.0005  # fallback if velocity missing
+ARM_POSITION_DELTA_THRESHOLD = 0.0005   # fallback if velocity missing
 
 # If your gripper joint names differ, update these.
 GRIPPER_JOINT_NAME_HINTS = [
@@ -158,6 +158,8 @@ class RobotStatePublisher(Node):
         self.last_positions: Dict[str, float] = {}
         self.last_velocities: Dict[str, float] = {}
         self.last_joint_msg_time: Optional[float] = None
+        self.prev_positions: Dict[str, float] = {}
+        self.prev_joint_msg_time: Optional[float] = None
 
         # Debounced states
         self.visual_servo_flag = DebouncedFlag()
@@ -196,19 +198,27 @@ class RobotStatePublisher(Node):
 
     def joint_state_callback(self, msg: JointState) -> None:
         now = time.monotonic()
-        self.last_joint_msg_time = now
-
-        self.last_joint_names = list(msg.name)
+        current_positions: Dict[str, float] = {}
+        current_velocities: Dict[str, float] = {}
 
         for i, name in enumerate(msg.name):
             if i < len(msg.position):
-                self.last_positions[name] = msg.position[i]
+                current_positions[name] = msg.position[i]
             if i < len(msg.velocity):
-                self.last_velocities[name] = msg.velocity[i]
+                current_velocities[name] = msg.velocity[i]
+
+        self.prev_positions = self.last_positions.copy()
+        self.prev_joint_msg_time = self.last_joint_msg_time
+        self.last_joint_msg_time = now
+
+        self.last_joint_names = list(msg.name)
+        self.last_positions = current_positions
+        self.last_velocities = current_velocities
 
     def compute_arm_moving_raw(self) -> bool:
         """
         Uses non-gripper joint velocities from /joint_states.
+        Falls back to position deltas between successive joint-state messages.
         """
         if not self.last_joint_names:
             return False
@@ -222,12 +232,34 @@ class RobotStatePublisher(Node):
         if not arm_vels:
             return False
 
-        return velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD
+        if velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD:
+            return True
+
+        if not self.prev_positions or self.prev_joint_msg_time is None or self.last_joint_msg_time is None:
+            return False
+
+        dt = self.last_joint_msg_time - self.prev_joint_msg_time
+        if dt <= 0:
+            return False
+
+        arm_position_rates: List[float] = []
+        for name in self.last_joint_names:
+            if looks_like_gripper_joint(name):
+                continue
+            if name not in self.prev_positions or name not in self.last_positions:
+                continue
+            delta = float(self.last_positions[name]) - float(self.prev_positions[name])
+            arm_position_rates.append(delta / dt)
+
+        if not arm_position_rates:
+            return False
+
+        return velocity_norm(arm_position_rates) > ARM_POSITION_DELTA_THRESHOLD
 
     def compute_gripper_moving_raw(self) -> bool:
         """
         Prefers gripper joint velocity if available.
-        Falls back to position-change detection from the latest joint state.
+        Falls back to position deltas between successive joint-state messages.
         """
         if not self.last_joint_names:
             return False
@@ -242,16 +274,13 @@ class RobotStatePublisher(Node):
             if vel > GRIPPER_VELOCITY_THRESHOLD:
                 return True
 
-        # Position-delta fallback:
-        # if velocity is unavailable or always zero, compare current positions
-        # over a short delay.
-        # This is intentionally simple for v1.
-        current_positions = [float(self.last_positions.get(name, 0.0)) for name in gripper_names]
-        time.sleep(0.005)
-        next_positions = [float(self.last_positions.get(name, 0.0)) for name in gripper_names]
+        if not self.prev_positions:
+            return False
 
-        for p0, p1 in zip(current_positions, next_positions):
-            if abs(p1 - p0) > GRIPPER_POSITION_DELTA_THRESHOLD:
+        for name in gripper_names:
+            if name not in self.prev_positions or name not in self.last_positions:
+                continue
+            if abs(float(self.last_positions[name]) - float(self.prev_positions[name])) > GRIPPER_POSITION_DELTA_THRESHOLD:
                 return True
 
         return False
