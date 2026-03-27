@@ -25,15 +25,13 @@ Notes:
 from __future__ import annotations
 
 import math
-import os
 import re
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 import rclpy
 from rclpy.node import Node
@@ -63,8 +61,6 @@ KT_PATTERNS = [
     r"franka_kinesthetic_teaching_GUI",
 ]
 
-KT_PID_FILE = Path("/tmp/fr3_kinesthetic_gui.pid")
-
 # Thresholds for binary movement flags
 ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
 GRIPPER_VELOCITY_THRESHOLD = 0.001      # joint velocity threshold
@@ -84,14 +80,6 @@ GRIPPER_JOINT_NAME_HINTS = [
 # Debounce settings to reduce flicker
 REQUIRED_CONSECUTIVE_TRUE = 2
 REQUIRED_CONSECUTIVE_FALSE = 2
-DIAGNOSTIC_LOG_PERIOD_SEC = 5.0
-JOINT_STATE_TOPICS = [
-    "/joint_states",
-    "/franka/joint_states",
-    "/franka_gripper/joint_states",
-    "/fr3_gripper/joint_states",
-]
-TOPIC_STALE_AFTER_SEC = 1.0
 
 
 # ----------------------------
@@ -119,33 +107,6 @@ def process_matches_any(patterns: Sequence[str]) -> bool:
             if re.search(pattern, line):
                 return True
     return False
-
-
-def pid_file_process_is_alive(pid_file: Path) -> bool:
-    """
-    Return True if the PID file exists and points to a currently running process.
-    Empty or stale PID files are treated as inactive.
-    """
-    try:
-        raw_pid = pid_file.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-    if not raw_pid:
-        return False
-
-    try:
-        pid = int(raw_pid)
-    except ValueError:
-        return False
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def velocity_norm(values: Sequence[float]) -> float:
@@ -185,15 +146,12 @@ class RobotStatePublisher(Node):
     def __init__(self) -> None:
         super().__init__("robot_state_publisher")
 
-        self.subscriptions = [
-            self.create_subscription(
-                JointState,
-                topic,
-                self._make_joint_state_callback(topic),
-                50,
-            )
-            for topic in JOINT_STATE_TOPICS
-        ]
+        self.subscription = self.create_subscription(
+            JointState,
+            "/joint_states",
+            self.joint_state_callback,
+            50,
+        )
 
         # Last observed joint info
         self.last_joint_names: List[str] = []
@@ -202,9 +160,6 @@ class RobotStatePublisher(Node):
         self.last_joint_msg_time: Optional[float] = None
         self.prev_positions: Dict[str, float] = {}
         self.prev_joint_msg_time: Optional[float] = None
-        self.last_joint_state_topic: str = "none"
-        self.last_diagnostic_log_time: float = 0.0
-        self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
 
         # Debounced states
         self.visual_servo_flag = DebouncedFlag()
@@ -240,60 +195,33 @@ class RobotStatePublisher(Node):
 
         self.get_logger().info("robot_state_publisher started.")
         self.get_logger().info(f"Publishing LSL stream: {STREAM_NAME}")
-        self.get_logger().info(f"Listening for joint states on: {', '.join(JOINT_STATE_TOPICS)}")
 
-    def _make_joint_state_callback(self, topic: str):
-        def _callback(msg: JointState) -> None:
-            now = time.monotonic()
-            current_positions: Dict[str, float] = {}
-            current_velocities: Dict[str, float] = {}
+    def joint_state_callback(self, msg: JointState) -> None:
+        now = time.monotonic()
+        current_positions: Dict[str, float] = {}
+        current_velocities: Dict[str, float] = {}
 
-            for i, name in enumerate(msg.name):
-                if i < len(msg.position):
-                    current_positions[name] = msg.position[i]
-                if i < len(msg.velocity):
-                    current_velocities[name] = msg.velocity[i]
-
-            self.topic_joint_states[topic] = (now, current_positions, current_velocities)
-            self.last_joint_state_topic = topic
-            self.refresh_joint_state_snapshot(now)
-
-        return _callback
-
-    def refresh_joint_state_snapshot(self, now: float) -> None:
-        merged_positions: Dict[str, float] = {}
-        merged_velocities: Dict[str, float] = {}
-        freshest_topic = "none"
-        freshest_stamp = -1.0
-
-        for topic, (stamp, positions, velocities) in list(self.topic_joint_states.items()):
-            if now - stamp > TOPIC_STALE_AFTER_SEC:
-                continue
-            merged_positions.update(positions)
-            merged_velocities.update(velocities)
-            if stamp > freshest_stamp:
-                freshest_stamp = stamp
-                freshest_topic = topic
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                current_positions[name] = msg.position[i]
+            if i < len(msg.velocity):
+                current_velocities[name] = msg.velocity[i]
 
         self.prev_positions = self.last_positions.copy()
         self.prev_joint_msg_time = self.last_joint_msg_time
         self.last_joint_msg_time = now
-        self.last_joint_names = list(merged_positions.keys())
-        self.last_positions = merged_positions
-        self.last_velocities = merged_velocities
-        self.last_joint_state_topic = freshest_topic
 
-    def compute_arm_motion_metrics(self) -> Tuple[bool, float, float, int]:
+        self.last_joint_names = list(msg.name)
+        self.last_positions = current_positions
+        self.last_velocities = current_velocities
+
+    def compute_arm_moving_raw(self) -> bool:
         """
         Uses non-gripper joint velocities from /joint_states.
         Falls back to position deltas between successive joint-state messages.
         """
-        now = time.monotonic()
-        if self.last_joint_msg_time is None or (now - self.last_joint_msg_time) > TOPIC_STALE_AFTER_SEC:
-            return False, 0.0, 0.0, 0
-
         if not self.last_joint_names:
-            return False, 0.0, 0.0, 0
+            return False
 
         arm_vels: List[float] = []
         for name in self.last_joint_names:
@@ -302,18 +230,17 @@ class RobotStatePublisher(Node):
             arm_vels.append(float(self.last_velocities.get(name, 0.0)))
 
         if not arm_vels:
-            return False, 0.0, 0.0, 0
+            return False
 
-        arm_velocity_norm = velocity_norm(arm_vels)
-        if arm_velocity_norm > ARM_VELOCITY_NORM_THRESHOLD:
-            return True, arm_velocity_norm, 0.0, len(arm_vels)
+        if velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD:
+            return True
 
         if not self.prev_positions or self.prev_joint_msg_time is None or self.last_joint_msg_time is None:
-            return False, arm_velocity_norm, 0.0, len(arm_vels)
+            return False
 
         dt = self.last_joint_msg_time - self.prev_joint_msg_time
         if dt <= 0:
-            return False, arm_velocity_norm, 0.0, len(arm_vels)
+            return False
 
         arm_position_rates: List[float] = []
         for name in self.last_joint_names:
@@ -325,93 +252,44 @@ class RobotStatePublisher(Node):
             arm_position_rates.append(delta / dt)
 
         if not arm_position_rates:
-            return False, arm_velocity_norm, 0.0, len(arm_vels)
+            return False
 
-        arm_position_rate_norm = velocity_norm(arm_position_rates)
-        return (
-            arm_position_rate_norm > ARM_POSITION_DELTA_THRESHOLD,
-            arm_velocity_norm,
-            arm_position_rate_norm,
-            len(arm_vels),
-        )
+        return velocity_norm(arm_position_rates) > ARM_POSITION_DELTA_THRESHOLD
 
-    def compute_gripper_motion_metrics(self) -> Tuple[bool, List[str], float, float]:
+    def compute_gripper_moving_raw(self) -> bool:
         """
         Prefers gripper joint velocity if available.
         Falls back to position deltas between successive joint-state messages.
         """
-        now = time.monotonic()
-        if self.last_joint_msg_time is None or (now - self.last_joint_msg_time) > TOPIC_STALE_AFTER_SEC:
-            return False, [], 0.0, 0.0
-
         if not self.last_joint_names:
-            return False, [], 0.0, 0.0
+            return False
 
         gripper_names = [n for n in self.last_joint_names if looks_like_gripper_joint(n)]
         if not gripper_names:
-            return False, [], 0.0, 0.0
+            return False
 
         # Velocity-based check
-        max_gripper_velocity = 0.0
         for name in gripper_names:
             vel = abs(float(self.last_velocities.get(name, 0.0)))
-            max_gripper_velocity = max(max_gripper_velocity, vel)
             if vel > GRIPPER_VELOCITY_THRESHOLD:
-                return True, gripper_names, max_gripper_velocity, 0.0
+                return True
 
         if not self.prev_positions:
-            return False, gripper_names, max_gripper_velocity, 0.0
+            return False
 
-        max_gripper_position_delta = 0.0
         for name in gripper_names:
             if name not in self.prev_positions or name not in self.last_positions:
                 continue
-            delta = abs(float(self.last_positions[name]) - float(self.prev_positions[name]))
-            max_gripper_position_delta = max(max_gripper_position_delta, delta)
-            if delta > GRIPPER_POSITION_DELTA_THRESHOLD:
-                return True, gripper_names, max_gripper_velocity, max_gripper_position_delta
+            if abs(float(self.last_positions[name]) - float(self.prev_positions[name])) > GRIPPER_POSITION_DELTA_THRESHOLD:
+                return True
 
-        return False, gripper_names, max_gripper_velocity, max_gripper_position_delta
-
-    def maybe_log_diagnostics(
-        self,
-        sample: Sequence[int],
-        arm_velocity_norm: float,
-        arm_position_rate_norm: float,
-        arm_joint_count: int,
-        gripper_names: Sequence[str],
-        gripper_velocity_max: float,
-        gripper_position_delta_max: float,
-    ) -> None:
-        now = time.monotonic()
-        if now - self.last_diagnostic_log_time < DIAGNOSTIC_LOG_PERIOD_SEC:
-            return
-
-        self.last_diagnostic_log_time = now
-        joint_state_age = "none" if self.last_joint_msg_time is None else f"{now - self.last_joint_msg_time:.3f}s"
-        gripper_text = ",".join(gripper_names) if gripper_names else "none"
-        self.get_logger().info(
-            "LSL sample=%s joint_state_topic=%s joint_state_age=%s arm_joints=%d "
-            "arm_vel_norm=%.6f arm_pos_rate_norm=%.6f gripper_joints=%s "
-            "gripper_vel_max=%.6f gripper_pos_delta_max=%.6f"
-            % (
-                list(sample),
-                self.last_joint_state_topic,
-                joint_state_age,
-                arm_joint_count,
-                arm_velocity_norm,
-                arm_position_rate_norm,
-                gripper_text,
-                gripper_velocity_max,
-                gripper_position_delta_max,
-            )
-        )
+        return False
 
     def publish_sample(self) -> None:
         visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
-        kt_raw = pid_file_process_is_alive(KT_PID_FILE)
-        arm_moving_raw, arm_velocity_norm, arm_position_rate_norm, arm_joint_count = self.compute_arm_motion_metrics()
-        gripper_moving_raw, gripper_names, gripper_velocity_max, gripper_position_delta_max = self.compute_gripper_motion_metrics()
+        kt_raw = process_matches_any(KT_PATTERNS)
+        arm_moving_raw = self.compute_arm_moving_raw()
+        gripper_moving_raw = self.compute_gripper_moving_raw()
 
         visual_servo_active = self.visual_servo_flag.update(visual_servo_raw)
         kt_active = self.kt_flag.update(kt_raw)
@@ -426,15 +304,6 @@ class RobotStatePublisher(Node):
         ]
 
         self.outlet.push_sample(sample, local_clock())
-        self.maybe_log_diagnostics(
-            sample,
-            arm_velocity_norm,
-            arm_position_rate_norm,
-            arm_joint_count,
-            gripper_names,
-            gripper_velocity_max,
-            gripper_position_delta_max,
-        )
 
     def shutdown(self) -> None:
         self.get_logger().info("Shutting down robot_state_publisher.")
