@@ -24,6 +24,7 @@ Notes:
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import signal
@@ -32,6 +33,8 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import rclpy
 from rclpy.node import Node
@@ -47,6 +50,8 @@ STREAM_NAME = "FR3_State"
 STREAM_TYPE = "RobotState"
 STREAM_UID = "fr3_state_binary_v1"
 PUBLISH_RATE_HZ = 50.0
+STATE_API_URL = "http://127.0.0.1:8765/state"
+STATE_API_TIMEOUT_SEC = 0.05
 
 # Process-name patterns used to decide whether the tools are active.
 # Adjust these if your actual process names differ.
@@ -107,6 +112,31 @@ def process_matches_any(patterns: Sequence[str]) -> bool:
             if re.search(pattern, line):
                 return True
     return False
+
+
+def fetch_state_api_snapshot() -> Optional[Dict[str, int]]:
+    """
+    Return the current robot-state snapshot from the local API if available.
+    Expected response shape:
+        {"state": {"visual_servo_active": 0/1, ...}}
+    """
+    try:
+        with urlopen(STATE_API_URL, timeout=STATE_API_TIMEOUT_SEC) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, TimeoutError, ValueError, OSError):
+        return None
+
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return None
+
+    snapshot: Dict[str, int] = {}
+    for key, value in state.items():
+        try:
+            snapshot[key] = 1 if bool(int(value)) else 0
+        except (TypeError, ValueError):
+            continue
+    return snapshot
 
 
 def velocity_norm(values: Sequence[float]) -> float:
@@ -286,10 +316,28 @@ class RobotStatePublisher(Node):
         return False
 
     def publish_sample(self) -> None:
-        visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
-        kt_raw = process_matches_any(KT_PATTERNS)
-        arm_moving_raw = self.compute_arm_moving_raw()
-        gripper_moving_raw = self.compute_gripper_moving_raw()
+        api_state = fetch_state_api_snapshot()
+
+        visual_servo_raw = (
+            bool(api_state["visual_servo_active"])
+            if api_state is not None and "visual_servo_active" in api_state
+            else process_matches_any(VISUAL_SERVO_PATTERNS)
+        )
+        kt_raw = (
+            bool(api_state["kt_active"])
+            if api_state is not None and "kt_active" in api_state
+            else process_matches_any(KT_PATTERNS)
+        )
+        arm_moving_raw = (
+            bool(api_state["arm_moving"])
+            if api_state is not None and "arm_moving" in api_state
+            else self.compute_arm_moving_raw()
+        )
+        gripper_moving_raw = (
+            bool(api_state["gripper_moving"])
+            if api_state is not None and "gripper_moving" in api_state
+            else self.compute_gripper_moving_raw()
+        )
 
         visual_servo_active = self.visual_servo_flag.update(visual_servo_raw)
         kt_active = self.kt_flag.update(kt_raw)

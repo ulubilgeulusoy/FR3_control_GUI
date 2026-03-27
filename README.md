@@ -382,6 +382,31 @@ When you enter the control screen with both SSH and X11 ready, the GUI runs this
 
 When you disconnect SSH or close the GUI, the app sends `SIGTERM` to the publisher PID if it was started through the tracked PID file.
 
+### Optional Robot State API
+
+This repo also includes `robot_state_api.py`, a small local HTTP server intended to run on the robot computer. It lets the real robot-control applications publish the four LSL flags explicitly:
+
+- `visual_servo_active`
+- `kt_active`
+- `arm_moving`
+- `gripper_moving`
+
+Default endpoint:
+
+```text
+http://127.0.0.1:8765/state
+```
+
+Example update:
+
+```bash
+curl -X POST http://127.0.0.1:8765/state \
+  -H "Content-Type: application/json" \
+  -d '{"visual_servo_active": 1, "arm_moving": 1, "ttl_sec": 0.5}'
+```
+
+`robot_state_publisher.py` will use this API automatically when it is reachable, and will fall back to the older process/ROS-topic heuristics when it is not.
+
 ### Stop / Kill Buttons
 
 - `Stop` sends `SIGTERM` to the PID in the corresponding `/tmp/*.pid`
