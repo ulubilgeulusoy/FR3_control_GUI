@@ -11,10 +11,10 @@ Channels:
     3: gripper_moving
 
 Current logic:
-- visual_servo_active: 1 if the tracked visual-servo PID file points to a live process
-- kt_active: 1 if the tracked kinesthetic-teaching PID file points to a live process
-- arm_moving: 1 if merged robot joint velocity norm is above threshold
-- gripper_moving: 1 if merged gripper joint velocity/position change is above threshold
+- visual_servo_active: 1 if a matching visual-servo process is running
+- kt_active: 1 if a matching kinesthetic-teaching process is running
+- arm_moving: 1 if robot joint velocity norm is above threshold
+- gripper_moving: 1 if gripper joint velocity/position change is above threshold
 
 Notes:
 - This version uses ROS 2 /joint_states for motion detection.
@@ -25,12 +25,12 @@ Notes:
 from __future__ import annotations
 
 import math
-import os
+import re
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import rclpy
@@ -48,8 +48,17 @@ STREAM_TYPE = "RobotState"
 STREAM_UID = "fr3_state_binary_v1"
 PUBLISH_RATE_HZ = 50.0
 
-VISUAL_SERVO_PID_FILE = Path("/tmp/fr3_visual_servo.pid")
-KT_PID_FILE = Path("/tmp/fr3_kinesthetic_gui.pid")
+VISUAL_SERVO_PATTERNS = [
+    r"\brun_visual_servo_combined\.sh\b",
+    r"\bservoFrankaIBVS_combined\b",
+    r"\bvisual_servo\b",
+]
+
+KT_PATTERNS = [
+    r"\brun_gui\.sh\b",
+    r"\bfranka_teach\w*\b",
+    r"\bkinesthetic\b",
+]
 
 # Thresholds for binary movement flags
 ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
@@ -74,53 +83,48 @@ DIAGNOSTIC_LOG_PERIOD_SEC = 5.0
 JOINT_STATE_TOPICS = [
     "/joint_states",
     "/franka/joint_states",
-    "/franka_gripper/joint_states",
-    "/fr3_gripper/joint_states",
 ]
-TOPIC_STALE_AFTER_SEC = 1.0
 
 
 # ----------------------------
 # Helpers
 # ----------------------------
 
-def pid_file_process_is_alive(pid_file: Path) -> bool:
+def process_matches_any(patterns: Sequence[str], *, exclude_pid: Optional[int] = None) -> bool:
     """
-    Return True if the PID file exists and points to a currently running process.
-    Removes empty/stale PID files so the GUI and LSL publisher converge on the same state.
+    Return True if any running process command line matches any regex pattern.
+    Uses 'ps -eo pid=,comm=,args=' to inspect command lines.
     """
     try:
-        raw_pid = pid_file.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return False
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,comm=,args="],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except Exception:
         return False
 
-    if not raw_pid:
+    lines = result.stdout.splitlines()
+    for line in lines:
+        fields = line.strip().split(None, 2)
+        if len(fields) < 3:
+            continue
         try:
-            pid_file.unlink()
-        except OSError:
-            pass
-        return False
-
-    try:
-        pid = int(raw_pid)
-    except ValueError:
-        try:
-            pid_file.unlink()
-        except OSError:
-            pass
-        return False
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        try:
-            pid_file.unlink()
-        except OSError:
-            pass
-        return False
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        if exclude_pid is not None and pid == exclude_pid:
+            continue
+        comm = fields[1]
+        args = fields[2]
+        if comm == "ps":
+            continue
+        haystack = f"{comm} {args}"
+        for pattern in patterns:
+            if re.search(pattern, haystack):
+                return True
+    return False
 
 
 def velocity_norm(values: Sequence[float]) -> float:
@@ -174,7 +178,6 @@ class RobotStatePublisher(Node):
         self.prev_joint_msg_time: Optional[float] = None
         self.last_diagnostic_log_time: float = 0.0
         self.last_joint_state_topic: str = "none"
-        self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
 
         # Debounced states
         self.visual_servo_flag = DebouncedFlag()
@@ -233,45 +236,10 @@ class RobotStatePublisher(Node):
 
     def joint_state_callback_for_topic(self, topic: str):
         def _callback(msg: JointState) -> None:
-            now = time.monotonic()
-            current_positions: Dict[str, float] = {}
-            current_velocities: Dict[str, float] = {}
-
-            for i, name in enumerate(msg.name):
-                if i < len(msg.position):
-                    current_positions[name] = msg.position[i]
-                if i < len(msg.velocity):
-                    current_velocities[name] = msg.velocity[i]
-
-            self.topic_joint_states[topic] = (now, current_positions, current_velocities)
             self.last_joint_state_topic = topic
-            self._refresh_joint_state_snapshot(now)
+            self.joint_state_callback(msg)
 
         return _callback
-
-    def _refresh_joint_state_snapshot(self, now: float) -> None:
-        merged_positions: Dict[str, float] = {}
-        merged_velocities: Dict[str, float] = {}
-        fresh_topics: List[Tuple[str, float]] = []
-
-        for topic, (stamp, positions, velocities) in list(self.topic_joint_states.items()):
-            age = now - stamp
-            if age > TOPIC_STALE_AFTER_SEC:
-                continue
-            fresh_topics.append((topic, stamp))
-            merged_positions.update(positions)
-            merged_velocities.update(velocities)
-
-        self.prev_positions = self.last_positions.copy()
-        self.prev_joint_msg_time = self.last_joint_msg_time
-        self.last_joint_msg_time = now
-        self.last_positions = merged_positions
-        self.last_velocities = merged_velocities
-        self.last_joint_names = list(merged_positions.keys())
-
-        if fresh_topics:
-            freshest_topic = max(fresh_topics, key=lambda item: item[1])[0]
-            self.last_joint_state_topic = freshest_topic
 
     def compute_arm_motion_metrics(self) -> Tuple[bool, float, float, int]:
         """
@@ -404,8 +372,8 @@ class RobotStatePublisher(Node):
             )
 
     def publish_sample(self) -> None:
-        visual_servo_raw = pid_file_process_is_alive(VISUAL_SERVO_PID_FILE)
-        kt_raw = pid_file_process_is_alive(KT_PID_FILE)
+        visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS, exclude_pid=self.get_pid())
+        kt_raw = process_matches_any(KT_PATTERNS, exclude_pid=self.get_pid())
         arm_moving_raw, arm_velocity_norm, arm_position_rate_norm, arm_joint_count = self.compute_arm_motion_metrics()
         gripper_moving_raw, gripper_names, gripper_velocity_max, gripper_position_delta_max = self.compute_gripper_motion_metrics()
 
