@@ -52,7 +52,7 @@ STATE_FIELDS = (
 class StateStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._values: Dict[str, int] = {field: 0 for field in STATE_FIELDS}
+        self._values: Dict[str, Optional[int]] = {field: None for field in STATE_FIELDS}
         self._expires_at: Dict[str, Optional[float]] = {field: None for field in STATE_FIELDS}
         self._updated_at = time.time()
 
@@ -63,9 +63,10 @@ class StateStore:
             for field in STATE_FIELDS:
                 expires_at = self._expires_at[field]
                 if expires_at is not None and now >= expires_at:
-                    self._values[field] = 0
+                    self._values[field] = None
                     self._expires_at[field] = None
-                values[field] = int(self._values[field])
+                value = self._values[field]
+                values[field] = None if value is None else int(value)
 
             return {
                 "state": values,

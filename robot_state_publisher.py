@@ -132,6 +132,8 @@ def fetch_state_api_snapshot() -> Optional[Dict[str, int]]:
 
     snapshot: Dict[str, int] = {}
     for key, value in state.items():
+        if value is None:
+            continue
         try:
             snapshot[key] = 1 if bool(int(value)) else 0
         except (TypeError, ValueError):
@@ -318,26 +320,16 @@ class RobotStatePublisher(Node):
     def publish_sample(self) -> None:
         api_state = fetch_state_api_snapshot()
 
-        visual_servo_raw = (
-            bool(api_state["visual_servo_active"])
-            if api_state is not None and "visual_servo_active" in api_state
-            else process_matches_any(VISUAL_SERVO_PATTERNS)
-        )
-        kt_raw = (
-            bool(api_state["kt_active"])
-            if api_state is not None and "kt_active" in api_state
-            else process_matches_any(KT_PATTERNS)
-        )
-        arm_moving_raw = (
-            bool(api_state["arm_moving"])
-            if api_state is not None and "arm_moving" in api_state
-            else self.compute_arm_moving_raw()
-        )
-        gripper_moving_raw = (
-            bool(api_state["gripper_moving"])
-            if api_state is not None and "gripper_moving" in api_state
-            else self.compute_gripper_moving_raw()
-        )
+        visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
+        kt_raw = process_matches_any(KT_PATTERNS)
+        arm_moving_raw = self.compute_arm_moving_raw()
+        gripper_moving_raw = self.compute_gripper_moving_raw()
+
+        if api_state is not None:
+            visual_servo_raw = visual_servo_raw or bool(api_state.get("visual_servo_active", 0))
+            kt_raw = kt_raw or bool(api_state.get("kt_active", 0))
+            arm_moving_raw = arm_moving_raw or bool(api_state.get("arm_moving", 0))
+            gripper_moving_raw = gripper_moving_raw or bool(api_state.get("gripper_moving", 0))
 
         visual_servo_active = self.visual_servo_flag.update(visual_servo_raw)
         kt_active = self.kt_flag.update(kt_raw)

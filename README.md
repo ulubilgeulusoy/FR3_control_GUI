@@ -405,7 +405,9 @@ curl -X POST http://127.0.0.1:8765/state \
   -d '{"visual_servo_active": 1, "arm_moving": 1, "ttl_sec": 0.5}'
 ```
 
-`robot_state_publisher.py` will use this API automatically when it is reachable, and will fall back to the older process/ROS-topic heuristics when it is not.
+The GUI now starts `robot_state_api.py` automatically on the robot computer alongside `robot_state_publisher.py` when you enter the control screen.
+
+`robot_state_publisher.py` uses API values when they are present, but it still keeps the older process/ROS-topic heuristics active as fallback so visual-servo and kinesthetic activity do not disappear just because the API is running.
 
 ### Stop / Kill Buttons
 
