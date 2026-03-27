@@ -243,6 +243,7 @@ class FR3LauncherApp:
 
         ttk.Button(tools, text="Check Remote Status", command=self.check_remote_status).pack(side="left")
         ttk.Button(tools, text="Show Last Logs", command=self.show_last_logs).pack(side="left", padx=8)
+        ttk.Button(tools, text="Debug LSL Status", command=self.debug_lsl_status).pack(side="left")
         ttk.Button(tools, text="Back", command=self.show_login_frame).pack(side="right")
         ttk.Button(tools, text="Disconnect", command=self.disconnect_ssh).pack(side="right", padx=(0, 8))
 
@@ -745,6 +746,30 @@ class FR3LauncherApp:
             "'"
         )
         self.run_ssh_command_async(cmd, "Last Logs")
+
+    def debug_lsl_status(self):
+        cmd = (
+            "bash -lc '"
+            "source /opt/ros/humble/setup.bash >/dev/null 2>&1 || true; "
+            f'echo "--- Kinesthetic PID file ---"; '
+            f'if [ -f {shlex.quote(self.kinesthetic_pid_file)} ]; then cat {shlex.quote(self.kinesthetic_pid_file)}; else echo "missing"; fi; '
+            f'echo "--- Visual PID file ---"; '
+            f'if [ -f {shlex.quote(self.visual_pid_file)} ]; then cat {shlex.quote(self.visual_pid_file)}; else echo "missing"; fi; '
+            'echo "--- Matching kinesthetic processes ---"; '
+            "ps -ef | grep -E \"run_gui.sh|franka_teach|kinesthetic\" | grep -v grep || echo \"none\"; "
+            'echo "--- Matching visual-servo processes ---"; '
+            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|visual_servo\" | grep -v grep || echo \"none\"; "
+            'echo "--- ROS topics with joint in name ---"; '
+            "(ros2 topic list 2>/dev/null | grep joint) || echo \"No joint topics found\"; "
+            'for TOPIC in /joint_states /franka/joint_states /franka_gripper/joint_states /fr3_gripper/joint_states; do '
+            'echo \"--- Topic info: $TOPIC ---\"; '
+            'ros2 topic info \"$TOPIC\" 2>/dev/null || echo \"missing\"; '
+            'echo \"--- Topic sample: $TOPIC ---\"; '
+            'timeout 3s ros2 topic echo --once \"$TOPIC\" 2>/dev/null || echo \"no sample\"; '
+            'done; '
+            "'"
+        )
+        self.run_ssh_command_async(cmd, "Debug LSL Status")
 
     def on_close(self):
         self._stop_robot_state_publisher_before_disconnect()
