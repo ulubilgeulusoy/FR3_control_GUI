@@ -25,15 +25,13 @@ Notes:
 from __future__ import annotations
 
 import math
-import os
 import re
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 import rclpy
 from rclpy.node import Node
@@ -63,8 +61,6 @@ KT_PATTERNS = [
     r"franka_kinesthetic_teaching_GUI",
 ]
 
-KT_PID_FILE = Path("/tmp/fr3_kinesthetic_gui.pid")
-
 # Thresholds for binary movement flags
 ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
 GRIPPER_VELOCITY_THRESHOLD = 0.001      # joint velocity threshold
@@ -84,16 +80,6 @@ GRIPPER_JOINT_NAME_HINTS = [
 # Debounce settings to reduce flicker
 REQUIRED_CONSECUTIVE_TRUE = 2
 REQUIRED_CONSECUTIVE_FALSE = 2
-
-# Joint-state topics observed on the robot. The publisher merges fresh data
-# across these topics so arm and gripper motion can be detected separately.
-JOINT_STATE_TOPICS = [
-    "/joint_states",
-    "/NS_1/joint_states",
-    "/NS_1/franka/joint_states",
-    "/NS_1/franka_gripper/joint_states",
-]
-JOINT_STATE_STALE_AFTER_SEC = 1.0
 
 
 # ----------------------------
@@ -121,29 +107,6 @@ def process_matches_any(patterns: Sequence[str]) -> bool:
             if re.search(pattern, line):
                 return True
     return False
-
-
-def pid_file_process_is_alive(pid_file: Path) -> bool:
-    try:
-        raw_pid = pid_file.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-    if not raw_pid:
-        return False
-
-    try:
-        pid = int(raw_pid)
-    except ValueError:
-        return False
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def velocity_norm(values: Sequence[float]) -> float:
@@ -183,15 +146,12 @@ class RobotStatePublisher(Node):
     def __init__(self) -> None:
         super().__init__("robot_state_publisher")
 
-        self.subscriptions = [
-            self.create_subscription(
-                JointState,
-                topic,
-                self._make_joint_state_callback(topic),
-                50,
-            )
-            for topic in JOINT_STATE_TOPICS
-        ]
+        self.subscription = self.create_subscription(
+            JointState,
+            "/joint_states",
+            self.joint_state_callback,
+            50,
+        )
 
         # Last observed joint info
         self.last_joint_names: List[str] = []
@@ -200,7 +160,6 @@ class RobotStatePublisher(Node):
         self.last_joint_msg_time: Optional[float] = None
         self.prev_positions: Dict[str, float] = {}
         self.prev_joint_msg_time: Optional[float] = None
-        self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
 
         # Debounced states
         self.visual_servo_flag = DebouncedFlag()
@@ -237,49 +196,30 @@ class RobotStatePublisher(Node):
         self.get_logger().info("robot_state_publisher started.")
         self.get_logger().info(f"Publishing LSL stream: {STREAM_NAME}")
 
-    def _make_joint_state_callback(self, topic: str):
-        def _callback(msg: JointState) -> None:
-            now = time.monotonic()
-            current_positions: Dict[str, float] = {}
-            current_velocities: Dict[str, float] = {}
+    def joint_state_callback(self, msg: JointState) -> None:
+        now = time.monotonic()
+        current_positions: Dict[str, float] = {}
+        current_velocities: Dict[str, float] = {}
 
-            for i, name in enumerate(msg.name):
-                if i < len(msg.position):
-                    current_positions[name] = msg.position[i]
-                if i < len(msg.velocity):
-                    current_velocities[name] = msg.velocity[i]
-
-            self.topic_joint_states[topic] = (now, current_positions, current_velocities)
-            self._refresh_joint_state_snapshot(now)
-
-        return _callback
-
-    def _refresh_joint_state_snapshot(self, now: float) -> None:
-        merged_positions: Dict[str, float] = {}
-        merged_velocities: Dict[str, float] = {}
-
-        for stamp, positions, velocities in self.topic_joint_states.values():
-            if now - stamp > JOINT_STATE_STALE_AFTER_SEC:
-                continue
-            merged_positions.update(positions)
-            merged_velocities.update(velocities)
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                current_positions[name] = msg.position[i]
+            if i < len(msg.velocity):
+                current_velocities[name] = msg.velocity[i]
 
         self.prev_positions = self.last_positions.copy()
         self.prev_joint_msg_time = self.last_joint_msg_time
         self.last_joint_msg_time = now
-        self.last_joint_names = list(merged_positions.keys())
-        self.last_positions = merged_positions
-        self.last_velocities = merged_velocities
+
+        self.last_joint_names = list(msg.name)
+        self.last_positions = current_positions
+        self.last_velocities = current_velocities
 
     def compute_arm_moving_raw(self) -> bool:
         """
         Uses non-gripper joint velocities from /joint_states.
         Falls back to position deltas between successive joint-state messages.
         """
-        now = time.monotonic()
-        if self.last_joint_msg_time is None or (now - self.last_joint_msg_time) > JOINT_STATE_STALE_AFTER_SEC:
-            return False
-
         if not self.last_joint_names:
             return False
 
@@ -321,10 +261,6 @@ class RobotStatePublisher(Node):
         Prefers gripper joint velocity if available.
         Falls back to position deltas between successive joint-state messages.
         """
-        now = time.monotonic()
-        if self.last_joint_msg_time is None or (now - self.last_joint_msg_time) > JOINT_STATE_STALE_AFTER_SEC:
-            return False
-
         if not self.last_joint_names:
             return False
 
@@ -351,7 +287,7 @@ class RobotStatePublisher(Node):
 
     def publish_sample(self) -> None:
         visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
-        kt_raw = pid_file_process_is_alive(KT_PID_FILE)
+        kt_raw = process_matches_any(KT_PATTERNS)
         arm_moving_raw = self.compute_arm_moving_raw()
         gripper_moving_raw = self.compute_gripper_moving_raw()
 
