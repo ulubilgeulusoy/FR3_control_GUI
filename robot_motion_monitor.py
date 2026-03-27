@@ -27,6 +27,7 @@ API_TTL_SEC = 0.35
 DISCOVERY_PERIOD_SEC = 1.0
 PUBLISH_PERIOD_SEC = 0.1
 TOPIC_STALE_AFTER_SEC = 1.0
+DIAGNOSTIC_PERIOD_SEC = 2.0
 
 ARM_VELOCITY_NORM_THRESHOLD = 0.01
 GRIPPER_VELOCITY_THRESHOLD = 0.001
@@ -81,6 +82,7 @@ class RobotMotionMonitor(Node):
         self.prev_joint_msg_time: Optional[float] = None
         self.last_arm_sent = False
         self.last_gripper_sent = False
+        self.last_diagnostic_time = 0.0
 
         self.discovery_timer = self.create_timer(DISCOVERY_PERIOD_SEC, self.discover_joint_state_topics)
         self.publish_timer = self.create_timer(PUBLISH_PERIOD_SEC, self.publish_motion_state)
@@ -214,6 +216,32 @@ class RobotMotionMonitor(Node):
         else:
             self.last_arm_sent = False
             self.last_gripper_sent = False
+
+        self.maybe_log_diagnostics(arm_moving, gripper_moving)
+
+    def maybe_log_diagnostics(self, arm_moving: bool, gripper_moving: bool) -> None:
+        now = time.monotonic()
+        if now - self.last_diagnostic_time < DIAGNOSTIC_PERIOD_SEC:
+            return
+
+        self.last_diagnostic_time = now
+
+        joint_age = "none" if self.last_joint_msg_time is None else f"{now - self.last_joint_msg_time:.3f}s"
+        gripper_names = [name for name in self.last_joint_names if looks_like_gripper_joint(name)]
+        arm_names = [name for name in self.last_joint_names if not looks_like_gripper_joint(name)]
+
+        self.get_logger().info(
+            "topics=%s joint_count=%d arm_joints=%s gripper_joints=%s joint_age=%s arm_moving=%d gripper_moving=%d"
+            % (
+                ",".join(sorted(self.joint_subscriptions.keys())) or "none",
+                len(self.last_joint_names),
+                ",".join(arm_names[:8]) or "none",
+                ",".join(gripper_names[:8]) or "none",
+                joint_age,
+                int(arm_moving),
+                int(gripper_moving),
+            )
+        )
 
 
 def main() -> None:
