@@ -5,6 +5,8 @@ import subprocess
 import shlex
 import os
 import json
+import re
+import time
 
 import paramiko
 
@@ -120,6 +122,22 @@ class FR3LauncherApp:
 
         self.visual_wsl_proc = None
         self.kinesthetic_wsl_proc = None
+        self._last_visual_servo_motion_pulse = 0.0
+        self._visual_servo_motion_patterns = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in [
+                r"\bservo\b",
+                r"\btracking\b",
+                r"\btag\b",
+                r"\bpose\b",
+                r"\bvelocity\b",
+                r"\btwist\b",
+                r"\bcontrol\b",
+                r"\berror\b",
+                r"\bdetected\b",
+                r"\bconvergen",
+            ]
+        ]
 
         self._build_login_frame()
         self._build_control_frame()
@@ -342,6 +360,35 @@ class FR3LauncherApp:
             return
         self.run_ssh_command_silent_async(self._build_robot_state_api_post_command(payload))
 
+    def handle_visual_servo_output_line(self, line):
+        lowered = line.strip().lower()
+        if not lowered:
+            return
+
+        ignore_fragments = [
+            "built target",
+            "configuring done",
+            "generating done",
+            "build files have been written",
+            "camera parameters",
+            "factory parameters",
+            "apriltag",
+            "e_m_c",
+            "warning: no xauth data",
+        ]
+        if any(fragment in lowered for fragment in ignore_fragments):
+            return
+
+        if not any(pattern.search(lowered) for pattern in self._visual_servo_motion_patterns):
+            return
+
+        now = time.monotonic()
+        if now - self._last_visual_servo_motion_pulse < 0.25:
+            return
+
+        self._last_visual_servo_motion_pulse = now
+        self.post_robot_state_update_async({"arm_moving": 1, "ttl_sec": 0.5})
+
     def _test_sshpass_in_wsl(self):
         distro = self.wsl_distro.get().strip()
         cmd = ["wsl.exe", "-d", distro, "-e", "bash", "-lc", "command -v sshpass >/dev/null 2>&1"]
@@ -478,6 +525,8 @@ class FR3LauncherApp:
                 self.root.after(0, lambda: self.append_log(f"[{label}] launched via WSL/X11.\n"))
 
                 for line in proc.stdout:
+                    if label == "Start Visual Servo":
+                        self.handle_visual_servo_output_line(line)
                     self.root.after(0, lambda ln=line: self.append_log(f"[{label}] {ln}"))
 
                 rc = proc.wait()
