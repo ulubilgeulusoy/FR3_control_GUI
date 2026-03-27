@@ -8,8 +8,10 @@ estimates arm/gripper motion, and pushes those flags into robot_state_api.py.
 
 from __future__ import annotations
 
+import importlib
 import json
 import math
+import os
 import traceback
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -30,6 +32,10 @@ PUBLISH_PERIOD_SEC = 0.1
 TOPIC_STALE_AFTER_SEC = 1.0
 DIAGNOSTIC_PERIOD_SEC = 2.0
 ACTION_STATUS_STALE_AFTER_SEC = 1.0
+VISUAL_SERVO_PID_FILE = os.environ.get("FR3_VISUAL_SERVO_PID_FILE", "/tmp/fr3_visual_servo.pid")
+FR3_ROBOT_IP = os.environ.get("FR3_ROBOT_IP", "172.16.0.2")
+ENABLE_FRANKY_BACKEND = os.environ.get("FR3_ENABLE_FRANKY_BACKEND", "1").strip() not in ("0", "false", "False")
+DIRECT_BACKEND_RETRY_SEC = 5.0
 
 ARM_VELOCITY_NORM_THRESHOLD = 0.01
 GRIPPER_VELOCITY_THRESHOLD = 0.001
@@ -70,6 +76,22 @@ def post_state_update(payload: Dict[str, object]) -> None:
         return
 
 
+def read_pid_file(path: str) -> Optional[int]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            content = handle.read().strip()
+    except OSError:
+        return None
+
+    if not content:
+        return None
+
+    try:
+        return int(content)
+    except ValueError:
+        return None
+
+
 class RobotMotionMonitor(Node):
     def __init__(self) -> None:
         super().__init__("robot_motion_monitor")
@@ -88,6 +110,15 @@ class RobotMotionMonitor(Node):
         self.last_arm_sent = False
         self.last_gripper_sent = False
         self.last_diagnostic_time = 0.0
+        self.direct_backend_name = "none"
+        self.direct_backend_error: Optional[str] = None
+        self.direct_backend_robot = None
+        self.direct_backend_last_attempt_time = 0.0
+        self.direct_backend_last_sample_time: Optional[float] = None
+        self.direct_backend_positions: Dict[str, float] = {}
+        self.direct_backend_velocities: Dict[str, float] = {}
+        self.direct_backend_last_arm_moving = False
+        self.last_visual_servo_pid: Optional[int] = None
 
         self.discovery_timer = self.create_timer(DISCOVERY_PERIOD_SEC, self.discover_joint_state_topics)
         self.publish_timer = self.create_timer(PUBLISH_PERIOD_SEC, self.publish_motion_state)
@@ -181,11 +212,123 @@ class RobotMotionMonitor(Node):
         self.last_velocities = merged_velocities
         self.last_joint_names = list(merged_positions.keys())
 
+    def visual_servo_running(self) -> bool:
+        pid = read_pid_file(VISUAL_SERVO_PID_FILE)
+        self.last_visual_servo_pid = pid
+        if pid is None:
+            return False
+
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def ensure_direct_backend(self) -> bool:
+        if not ENABLE_FRANKY_BACKEND:
+            self.direct_backend_name = "disabled"
+            return False
+        if self.direct_backend_robot is not None:
+            return True
+
+        now = time.monotonic()
+        if (now - self.direct_backend_last_attempt_time) < DIRECT_BACKEND_RETRY_SEC:
+            return False
+        self.direct_backend_last_attempt_time = now
+
+        try:
+            franky = importlib.import_module("franky")
+            robot_class = getattr(franky, "Robot", None)
+            if robot_class is None:
+                raise RuntimeError("franky.Robot not found")
+            self.direct_backend_robot = robot_class(FR3_ROBOT_IP)
+            self.direct_backend_name = "franky"
+            self.direct_backend_error = None
+            self.get_logger().info(f"Direct visual-servo backend connected via franky to {FR3_ROBOT_IP}")
+            return True
+        except Exception as exc:
+            self.direct_backend_robot = None
+            self.direct_backend_name = "unavailable"
+            self.direct_backend_error = str(exc)
+            return False
+
+    def compute_visual_servo_arm_moving(self) -> bool:
+        if not self.visual_servo_running():
+            self.direct_backend_last_arm_moving = False
+            return False
+        if not self.ensure_direct_backend():
+            self.direct_backend_last_arm_moving = False
+            return False
+
+        now = time.monotonic()
+        robot = self.direct_backend_robot
+
+        try:
+            joint_state = getattr(robot, "current_joint_state", None)
+            if joint_state is None:
+                current_joint_state = getattr(robot, "currentJointState", None)
+                if callable(current_joint_state):
+                    joint_state = current_joint_state()
+            if joint_state is None:
+                raise RuntimeError("no joint state accessor available")
+
+            positions_raw = getattr(joint_state, "position", None)
+            if positions_raw is None:
+                positions_raw = getattr(joint_state, "positions", None)
+            velocities_raw = getattr(joint_state, "velocity", None)
+            if velocities_raw is None:
+                velocities_raw = getattr(joint_state, "velocities", None)
+
+            if positions_raw is None:
+                current_joint_positions = getattr(robot, "currentJointPositions", None)
+                if callable(current_joint_positions):
+                    positions_raw = current_joint_positions()
+            if velocities_raw is None:
+                current_joint_velocities = getattr(robot, "currentJointVelocities", None)
+                if callable(current_joint_velocities):
+                    velocities_raw = current_joint_velocities()
+
+            if positions_raw is None or velocities_raw is None:
+                raise RuntimeError("direct backend did not expose joint positions/velocities")
+
+            positions = list(positions_raw)
+            velocities = list(velocities_raw)
+            if len(positions) < 7:
+                raise RuntimeError("expected at least 7 arm joints")
+
+            names = [f"fr3_joint{i}" for i in range(1, len(positions) + 1)]
+            latest_positions = {name: float(value) for name, value in zip(names, positions)}
+            latest_velocities = {name: float(value) for name, value in zip(names, velocities)}
+
+            moving = False
+            if latest_velocities and velocity_norm(list(latest_velocities.values())) > ARM_VELOCITY_NORM_THRESHOLD:
+                moving = True
+            elif self.direct_backend_positions and self.direct_backend_last_sample_time is not None:
+                dt = now - self.direct_backend_last_sample_time
+                if dt > 0:
+                    rates = [
+                        (latest_positions[name] - self.direct_backend_positions[name]) / dt
+                        for name in latest_positions
+                        if name in self.direct_backend_positions
+                    ]
+                    moving = bool(rates) and velocity_norm(rates) > ARM_POSITION_DELTA_THRESHOLD
+
+            self.direct_backend_positions = latest_positions
+            self.direct_backend_velocities = latest_velocities
+            self.direct_backend_last_sample_time = now
+            self.direct_backend_error = None
+            self.direct_backend_last_arm_moving = moving
+            return moving
+        except Exception as exc:
+            self.direct_backend_error = str(exc)
+            self.direct_backend_last_arm_moving = False
+            return False
+
     def compute_arm_moving(self) -> bool:
         if not self.last_joint_names or self.last_joint_msg_time is None:
-            return False
+            return self.compute_visual_servo_arm_moving()
         if time.monotonic() - self.last_joint_msg_time > TOPIC_STALE_AFTER_SEC:
-            return False
+            return self.compute_visual_servo_arm_moving()
 
         arm_vels: List[float] = []
         for name in self.last_joint_names:
@@ -197,11 +340,11 @@ class RobotMotionMonitor(Node):
             return True
 
         if not self.prev_positions or self.prev_joint_msg_time is None:
-            return False
+            return self.compute_visual_servo_arm_moving()
 
         dt = self.last_joint_msg_time - self.prev_joint_msg_time
         if dt <= 0:
-            return False
+            return self.compute_visual_servo_arm_moving()
 
         arm_position_rates: List[float] = []
         for name in self.last_joint_names:
@@ -211,7 +354,10 @@ class RobotMotionMonitor(Node):
                 continue
             arm_position_rates.append((self.last_positions[name] - self.prev_positions[name]) / dt)
 
-        return bool(arm_position_rates) and velocity_norm(arm_position_rates) > ARM_POSITION_DELTA_THRESHOLD
+        if bool(arm_position_rates) and velocity_norm(arm_position_rates) > ARM_POSITION_DELTA_THRESHOLD:
+            return True
+
+        return self.compute_visual_servo_arm_moving()
 
     def compute_gripper_moving(self) -> bool:
         now = time.monotonic()
@@ -278,10 +424,14 @@ class RobotMotionMonitor(Node):
         arm_names = [name for name in self.last_joint_names if not looks_like_gripper_joint(name)]
 
         self.get_logger().info(
-            "topics=%s gripper_status_topics=%s joint_count=%d arm_joints=%s gripper_joints=%s joint_age=%s arm_moving=%d gripper_moving=%d gripper_action_active=%d"
+            "topics=%s gripper_status_topics=%s visual_servo_pid=%s direct_backend=%s direct_backend_arm_moving=%d direct_backend_error=%s joint_count=%d arm_joints=%s gripper_joints=%s joint_age=%s arm_moving=%d gripper_moving=%d gripper_action_active=%d"
             % (
                 ",".join(sorted(self.joint_subscriptions.keys())) or "none",
                 ",".join(sorted(self.gripper_status_subscriptions.keys())) or "none",
+                str(self.last_visual_servo_pid) if self.last_visual_servo_pid is not None else "none",
+                self.direct_backend_name,
+                int(self.direct_backend_last_arm_moving),
+                (self.direct_backend_error or "none")[:120],
                 len(self.last_joint_names),
                 ",".join(arm_names[:8]) or "none",
                 ",".join(gripper_names[:8]) or "none",
