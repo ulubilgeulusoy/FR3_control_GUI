@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import math
+import traceback
 import time
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -71,7 +72,7 @@ class RobotMotionMonitor(Node):
         super().__init__("robot_motion_monitor")
 
         self.subscriptions: Dict[str, object] = {}
-        self.topic_joint_states: Dict[str, tuple[float, Dict[str, float], Dict[str, float]]] = {}
+        self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
         self.last_positions: Dict[str, float] = {}
         self.prev_positions: Dict[str, float] = {}
         self.last_velocities: Dict[str, float] = {}
@@ -216,13 +217,21 @@ class RobotMotionMonitor(Node):
 
 
 def main() -> None:
-    rclpy.init()
-    node = RobotMotionMonitor()
+    node: Optional[RobotMotionMonitor] = None
     try:
+        rclpy.init()
+        node = RobotMotionMonitor()
         rclpy.spin(node)
+    except Exception:
+        traceback.print_exc()
+        raise
     finally:
+        if node is not None:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
         if rclpy.ok():
-            node.destroy_node()
             rclpy.shutdown()
 
 
