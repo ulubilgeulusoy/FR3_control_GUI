@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import signal
 import subprocess
@@ -53,13 +54,8 @@ PUBLISH_RATE_HZ = 50.0
 STATE_API_URL = "http://127.0.0.1:8765/state"
 STATE_API_TIMEOUT_SEC = 0.05
 
-# Process-name patterns used to decide whether the tools are active.
-# Adjust these if your actual process names differ.
-VISUAL_SERVO_PATTERNS = [
-    r"run_visual_servo_combined\.sh",
-    r"FR3_visual_servo_examples",
-    r"visual_servo",
-]
+# PID file used by the launcher to track visual-servo lifecycle.
+VISUAL_SERVO_PID_FILE = "/tmp/fr3_visual_servo.pid"
 
 KT_PATTERNS = [
     r"run_gui\.sh",
@@ -111,6 +107,39 @@ def process_matches_any(patterns: Sequence[str]) -> bool:
         for pattern in patterns:
             if re.search(pattern, line):
                 return True
+    return False
+
+
+def pid_file_matches_process(pid_file: str, patterns: Sequence[str]) -> bool:
+    pid: Optional[int] = None
+    try:
+        with open(pid_file, "r", encoding="utf-8") as handle:
+            content = handle.read().strip()
+    except OSError:
+        return False
+
+    if not content:
+        return False
+
+    try:
+        pid = int(content)
+    except ValueError:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            cmdline = handle.read().replace(b"\x00", b" ").decode("utf-8", errors="replace")
+    except OSError:
+        return False
+
+    for pattern in patterns:
+        if re.search(pattern, cmdline):
+            return True
     return False
 
 
@@ -320,7 +349,10 @@ class RobotStatePublisher(Node):
     def publish_sample(self) -> None:
         api_state = fetch_state_api_snapshot()
 
-        visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
+        visual_servo_raw = pid_file_matches_process(
+            VISUAL_SERVO_PID_FILE,
+            [r"run_visual_servo_combined\.sh", r"servoFrankaIBVS_(combined|CHRPS)"],
+        )
         kt_raw = process_matches_any(KT_PATTERNS)
         arm_moving_raw = self.compute_arm_moving_raw()
         gripper_moving_raw = self.compute_gripper_moving_raw()
