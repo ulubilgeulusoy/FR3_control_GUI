@@ -1074,7 +1074,7 @@ class FR3LauncherApp:
             'echo "--- Matching kinesthetic processes ---"; '
             "ps -ef | grep -E \"run_gui.sh|franka_teach|kinesthetic\" | grep -v grep || echo \"none\"; "
             'echo "--- Matching visual-servo processes ---"; '
-            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|visual_servo\" | grep -v grep || echo \"none\"; "
+            "ps -ef | grep -E \"servoFrankaIBVS_(combined|CHRPS)|run_visual_servo_combined.sh\" | grep -v grep || echo \"none\"; "
             'echo "--- ROS nodes ---"; '
             "ros2 node list 2>/dev/null || echo \"No ROS nodes found\"; "
             'echo "--- ROS topics with types ---"; '
