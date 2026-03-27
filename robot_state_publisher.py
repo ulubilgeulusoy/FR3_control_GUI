@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import signal
 import subprocess
@@ -58,7 +57,8 @@ STATE_API_TIMEOUT_SEC = 0.05
 # Adjust these if your actual process names differ.
 VISUAL_SERVO_PATTERNS = [
     r"run_visual_servo_combined\.sh",
-    r"servoFrankaIBVS_(combined|CHRPS)",
+    r"FR3_visual_servo_examples",
+    r"visual_servo",
 ]
 
 KT_PATTERNS = [
@@ -106,13 +106,8 @@ def process_matches_any(patterns: Sequence[str]) -> bool:
     except Exception:
         return False
 
-    current_pid = str(os.getpid())
     lines = result.stdout.splitlines()
     for line in lines:
-        if current_pid in line and "robot_state_publisher.py" in line:
-            continue
-        if "robot_motion_monitor.py" in line or "robot_state_api.py" in line:
-            continue
         for pattern in patterns:
             if re.search(pattern, line):
                 return True

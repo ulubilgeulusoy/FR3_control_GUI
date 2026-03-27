@@ -757,16 +757,12 @@ class FR3LauncherApp:
 
     def _build_robot_motion_monitor_start_command(self):
         monitor_path = shlex.quote(self.robot_motion_monitor_path.get().strip())
-        robot_ip = shlex.quote(self.robot_ip.get().strip())
 
         return (
             "bash -lc '"
             f"PID_FILE={shlex.quote(self.robot_motion_monitor_pid_file)}; "
             f"LOG_FILE={shlex.quote(self.robot_motion_monitor_log_file)}; "
             f"SCRIPT={monitor_path}; "
-            f"FR3_ROBOT_IP={robot_ip}; "
-            f"FR3_VISUAL_SERVO_PID_FILE={shlex.quote(self.visual_pid_file)}; "
-            "export FR3_ROBOT_IP FR3_VISUAL_SERVO_PID_FILE; "
             "if [ ! -f \"$SCRIPT\" ]; then "
             'echo "ROBOT_MOTION_MONITOR_SCRIPT_NOT_FOUND"; '
             "exit 1; "
@@ -1074,7 +1070,7 @@ class FR3LauncherApp:
             'echo "--- Matching kinesthetic processes ---"; '
             "ps -ef | grep -E \"run_gui.sh|franka_teach|kinesthetic\" | grep -v grep || echo \"none\"; "
             'echo "--- Matching visual-servo processes ---"; '
-            "ps -ef | grep -E \"servoFrankaIBVS_(combined|CHRPS)|run_visual_servo_combined.sh\" | grep -v grep || echo \"none\"; "
+            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|visual_servo\" | grep -v grep || echo \"none\"; "
             'echo "--- ROS nodes ---"; '
             "ros2 node list 2>/dev/null || echo \"No ROS nodes found\"; "
             'echo "--- ROS topics with types ---"; '
