@@ -405,9 +405,19 @@ curl -X POST http://127.0.0.1:8765/state \
   -d '{"visual_servo_active": 1, "arm_moving": 1, "ttl_sec": 0.5}'
 ```
 
-The GUI now starts `robot_state_api.py` automatically on the robot computer alongside `robot_state_publisher.py` when you enter the control screen.
+The GUI now starts `robot_state_api.py` automatically on the robot computer alongside `robot_motion_monitor.py` and `robot_state_publisher.py` when you enter the control screen.
 
 `robot_state_publisher.py` uses API values when they are present, but it still keeps the older process/ROS-topic heuristics active as fallback so visual-servo and kinesthetic activity do not disappear just because the API is running.
+
+### Robot Motion Monitor
+
+`robot_motion_monitor.py` is a sidecar process in this repo that discovers ROS 2 `sensor_msgs/msg/JointState` topics dynamically, estimates arm/gripper motion, and posts those motion flags into `robot_state_api.py`.
+
+This keeps the LSL publisher itself simple:
+
+- `robot_motion_monitor.py` observes motion
+- `robot_state_api.py` stores explicit state
+- `robot_state_publisher.py` publishes the LSL stream
 
 ### Stop / Kill Buttons
 

@@ -90,6 +90,7 @@ class FR3LauncherApp:
         self.visual_servo_dir = tk.StringVar(value="/home/parc/FR3_visual_servo_examples")
         self.kinesthetic_dir = tk.StringVar(value="/home/parc/franka_kinesthetic_teaching_GUI")
         self.robot_state_api_path = tk.StringVar(value="/home/parc/FR3_control_GUI/robot_state_api.py")
+        self.robot_motion_monitor_path = tk.StringVar(value="/home/parc/FR3_control_GUI/robot_motion_monitor.py")
         self.robot_state_publisher_path = tk.StringVar(value="/home/parc/FR3_control_GUI/robot_state_publisher.py")
 
         # Visual servo args
@@ -101,10 +102,12 @@ class FR3LauncherApp:
         self.visual_pid_file = "/tmp/fr3_visual_servo.pid"
         self.kinesthetic_pid_file = "/tmp/fr3_kinesthetic_gui.pid"
         self.robot_state_api_pid_file = "/tmp/fr3_robot_state_api.pid"
+        self.robot_motion_monitor_pid_file = "/tmp/fr3_robot_motion_monitor.pid"
         self.robot_state_pid_file = "/tmp/fr3_robot_state_publisher.pid"
         self.visual_log_file = "/tmp/fr3_visual_servo.log"
         self.kinesthetic_log_file = "/tmp/fr3_kinesthetic.log"
         self.robot_state_api_log_file = "/tmp/fr3_robot_state_api.log"
+        self.robot_motion_monitor_log_file = "/tmp/fr3_robot_motion_monitor.log"
         self.robot_state_log_file = "/tmp/fr3_robot_state_publisher.log"
 
         self.status_text = tk.StringVar(value="Not connected")
@@ -173,23 +176,26 @@ class FR3LauncherApp:
         ttk.Label(remote, text="State API").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(remote, textvariable=self.robot_state_api_path).grid(row=2, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="State Publisher").grid(row=3, column=0, sticky="w", pady=5)
-        ttk.Entry(remote, textvariable=self.robot_state_publisher_path).grid(row=3, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Label(remote, text="Motion Monitor").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.robot_motion_monitor_path).grid(row=3, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="Robot IP").grid(row=4, column=0, sticky="w", pady=5)
-        ttk.Entry(remote, textvariable=self.robot_ip).grid(row=4, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Label(remote, text="State Publisher").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.robot_state_publisher_path).grid(row=4, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="eMc Path").grid(row=5, column=0, sticky="w", pady=5)
-        ttk.Entry(remote, textvariable=self.eMc_path).grid(row=5, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Label(remote, text="Robot IP").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.robot_ip).grid(row=5, column=1, sticky="ew", padx=8, pady=5)
 
-        ttk.Label(remote, text="Visual Mode").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Label(remote, text="eMc Path").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Entry(remote, textvariable=self.eMc_path).grid(row=6, column=1, sticky="ew", padx=8, pady=5)
+
+        ttk.Label(remote, text="Visual Mode").grid(row=7, column=0, sticky="w", pady=5)
         ttk.Combobox(
             remote,
             textvariable=self.visual_mode,
             values=["1", "2"],
             state="readonly",
             width=8
-        ).grid(row=6, column=1, sticky="w", padx=8, pady=5)
+        ).grid(row=7, column=1, sticky="w", padx=8, pady=5)
 
         remote.columnconfigure(1, weight=1)
 
@@ -619,6 +625,109 @@ class FR3LauncherApp:
             "fi'"
         )
 
+    def _build_robot_motion_monitor_cleanup_command(self):
+        monitor_path = shlex.quote(self.robot_motion_monitor_path.get().strip())
+
+        return (
+            "bash -lc '"
+            f"PID_FILE={shlex.quote(self.robot_motion_monitor_pid_file)}; "
+            f"SCRIPT={monitor_path}; "
+            "STOPPED=0; "
+            "if [ -f \"$PID_FILE\" ]; then "
+            "PID=$(cat \"$PID_FILE\"); "
+            "if [ -n \"$PID\" ] && kill -0 \"$PID\" 2>/dev/null; then "
+            "kill -TERM \"$PID\" 2>/dev/null || true; "
+            "sleep 1; "
+            "if kill -0 \"$PID\" 2>/dev/null; then "
+            "kill -KILL \"$PID\" 2>/dev/null || true; "
+            "fi; "
+            "STOPPED=1; "
+            "fi; "
+            "rm -f \"$PID_FILE\"; "
+            "fi; "
+            "PIDS=$(ps -eo pid=,comm=,args= | "
+            "while read -r PID COMM ARGS; do "
+            "if [[ \"$COMM\" =~ ^python(3(\\.[0-9]+)?)?$ ]] && [[ \"$ARGS\" == *\"$SCRIPT\"* ]]; then "
+            "echo \"$PID\"; "
+            "fi; "
+            "done || true); "
+            "if [ -n \"$PIDS\" ]; then "
+            "printf \"%s\n\" \"$PIDS\" | xargs -r kill -TERM 2>/dev/null || true; "
+            "sleep 1; "
+            "REMAINING=$(ps -eo pid=,comm=,args= | "
+            "while read -r PID COMM ARGS; do "
+            "if [[ \"$COMM\" =~ ^python(3(\\.[0-9]+)?)?$ ]] && [[ \"$ARGS\" == *\"$SCRIPT\"* ]]; then "
+            "echo \"$PID\"; "
+            "fi; "
+            "done || true); "
+            "if [ -n \"$REMAINING\" ]; then "
+            "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
+            "fi; "
+            "STOPPED=1; "
+            "fi; "
+            "if [ \"$STOPPED\" -eq 1 ]; then "
+            'echo "ROBOT_MOTION_MONITOR_CLEANED_UP"; '
+            "else "
+            'echo "ROBOT_MOTION_MONITOR_NOT_RUNNING"; '
+            "fi'"
+        )
+
+    def _build_robot_motion_monitor_start_command(self):
+        monitor_path = shlex.quote(self.robot_motion_monitor_path.get().strip())
+
+        return (
+            "bash -lc '"
+            f"PID_FILE={shlex.quote(self.robot_motion_monitor_pid_file)}; "
+            f"LOG_FILE={shlex.quote(self.robot_motion_monitor_log_file)}; "
+            f"SCRIPT={monitor_path}; "
+            "if [ ! -f \"$SCRIPT\" ]; then "
+            'echo "ROBOT_MOTION_MONITOR_SCRIPT_NOT_FOUND"; '
+            "exit 1; "
+            "fi; "
+            "if [ -f \"$PID_FILE\" ]; then "
+            "OLD_PID=$(cat \"$PID_FILE\"); "
+            "if [ -n \"$OLD_PID\" ] && kill -0 \"$OLD_PID\" 2>/dev/null; then "
+            "kill -TERM \"$OLD_PID\" 2>/dev/null || true; "
+            "sleep 1; "
+            "if kill -0 \"$OLD_PID\" 2>/dev/null; then "
+            "kill -KILL \"$OLD_PID\" 2>/dev/null || true; "
+            "fi; "
+            "fi; "
+            "rm -f \"$PID_FILE\"; "
+            "fi; "
+            "EXISTING=$(ps -eo pid=,comm=,args= | "
+            "while read -r PID COMM ARGS; do "
+            "if [[ \"$COMM\" =~ ^python(3(\\.[0-9]+)?)?$ ]] && [[ \"$ARGS\" == *\"$SCRIPT\"* ]]; then "
+            "echo \"$PID\"; "
+            "fi; "
+            "done || true); "
+            "if [ -n \"$EXISTING\" ]; then "
+            "printf \"%s\n\" \"$EXISTING\" | xargs -r kill -TERM 2>/dev/null || true; "
+            "sleep 1; "
+            "REMAINING=$(ps -eo pid=,comm=,args= | "
+            "while read -r PID COMM ARGS; do "
+            "if [[ \"$COMM\" =~ ^python(3(\\.[0-9]+)?)?$ ]] && [[ \"$ARGS\" == *\"$SCRIPT\"* ]]; then "
+            "echo \"$PID\"; "
+            "fi; "
+            "done || true); "
+            "if [ -n \"$REMAINING\" ]; then "
+            "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
+            "fi; "
+            "fi; "
+            "source /opt/ros/humble/setup.bash && "
+            "nohup python3 \"$SCRIPT\" > \"$LOG_FILE\" 2>&1 < /dev/null & "
+            "PID=$!; "
+            "echo \"$PID\" > \"$PID_FILE\"; "
+            "sleep 1; "
+            "if kill -0 \"$PID\" 2>/dev/null; then "
+            'echo "ROBOT_MOTION_MONITOR_STARTED PID=$PID"; '
+            "else "
+            "rm -f \"$PID_FILE\"; "
+            'echo "ROBOT_MOTION_MONITOR_FAILED_TO_START"; '
+            "exit 1; "
+            "fi'"
+        )
+
     def _build_robot_state_start_command(self):
         publisher_path = shlex.quote(self.robot_state_publisher_path.get().strip())
 
@@ -679,6 +788,7 @@ class FR3LauncherApp:
         if not self.ssh.connected:
             return
         self.run_ssh_command_async(self._build_robot_state_api_start_command(), "Robot State API")
+        self.run_ssh_command_async(self._build_robot_motion_monitor_start_command(), "Robot Motion Monitor")
         self.run_ssh_command_async(self._build_robot_state_start_command(), "Robot State Publisher")
 
     def _stop_robot_state_publisher_before_disconnect(self):
@@ -687,6 +797,7 @@ class FR3LauncherApp:
 
         try:
             self.ssh.exec(self._build_robot_state_cleanup_command())
+            self.ssh.exec(self._build_robot_motion_monitor_cleanup_command())
             self.ssh.exec(self._build_robot_state_api_cleanup_command())
         except Exception:
             pass
@@ -837,8 +948,10 @@ class FR3LauncherApp:
             f'if [ -f {self.robot_state_pid_file} ]; then cat {self.robot_state_pid_file}; else echo "missing"; fi; '
             f'echo "--- Robot State API PID file ---"; '
             f'if [ -f {self.robot_state_api_pid_file} ]; then cat {self.robot_state_api_pid_file}; else echo "missing"; fi; '
+            f'echo "--- Robot Motion Monitor PID file ---"; '
+            f'if [ -f {self.robot_motion_monitor_pid_file} ]; then cat {self.robot_motion_monitor_pid_file}; else echo "missing"; fi; '
             "echo \"--- Matching processes ---\"; "
-            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|franka_teach|run_gui.sh|robot_state_publisher.py|robot_state_api.py\" | grep -v grep'"
+            "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|franka_teach|run_gui.sh|robot_state_publisher.py|robot_state_api.py|robot_motion_monitor.py\" | grep -v grep'"
         )
         self.run_ssh_command_async(cmd, "Remote Status")
 
@@ -855,7 +968,10 @@ class FR3LauncherApp:
             f'tail -n 30 {self.robot_state_log_file} 2>/dev/null || echo "No robot state publisher log"; '
             f'echo ""; '
             f'echo "--- Robot State API Log ---"; '
-            f'tail -n 30 {self.robot_state_api_log_file} 2>/dev/null || echo "No robot state api log"'
+            f'tail -n 30 {self.robot_state_api_log_file} 2>/dev/null || echo "No robot state api log"; '
+            f'echo ""; '
+            f'echo "--- Robot Motion Monitor Log ---"; '
+            f'tail -n 30 {self.robot_motion_monitor_log_file} 2>/dev/null || echo "No robot motion monitor log"'
             "'"
         )
         self.run_ssh_command_async(cmd, "Last Logs")
