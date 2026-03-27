@@ -17,6 +17,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import rclpy
+from action_msgs.msg import GoalStatusArray
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
@@ -28,6 +29,7 @@ DISCOVERY_PERIOD_SEC = 1.0
 PUBLISH_PERIOD_SEC = 0.1
 TOPIC_STALE_AFTER_SEC = 1.0
 DIAGNOSTIC_PERIOD_SEC = 2.0
+ACTION_STATUS_STALE_AFTER_SEC = 1.0
 
 ARM_VELOCITY_NORM_THRESHOLD = 0.01
 GRIPPER_VELOCITY_THRESHOLD = 0.001
@@ -73,7 +75,10 @@ class RobotMotionMonitor(Node):
         super().__init__("robot_motion_monitor")
 
         self.joint_subscriptions: Dict[str, object] = {}
+        self.gripper_status_subscriptions: Dict[str, object] = {}
         self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
+        self.last_gripper_action_time: Optional[float] = None
+        self.last_gripper_action_active = False
         self.last_positions: Dict[str, float] = {}
         self.prev_positions: Dict[str, float] = {}
         self.last_velocities: Dict[str, float] = {}
@@ -94,19 +99,42 @@ class RobotMotionMonitor(Node):
         topic_names_and_types = self.get_topic_names_and_types()
         for topic_name, topic_types in topic_names_and_types:
             if "sensor_msgs/msg/JointState" not in topic_types:
-                continue
-            if topic_name in self.joint_subscriptions:
-                continue
-            if "joint" not in topic_name.lower() and "gripper" not in topic_name.lower():
+                if "action_msgs/msg/GoalStatusArray" in topic_types:
+                    self._maybe_subscribe_gripper_status(topic_name)
                 continue
 
-            self.joint_subscriptions[topic_name] = self.create_subscription(
-                JointState,
-                topic_name,
-                self._make_joint_state_callback(topic_name),
-                50,
-            )
-            self.get_logger().info(f"Subscribed to JointState topic: {topic_name}")
+            self._maybe_subscribe_joint_state(topic_name)
+
+    def _maybe_subscribe_joint_state(self, topic_name: str) -> None:
+        if topic_name in self.joint_subscriptions:
+            return
+        if "joint" not in topic_name.lower() and "gripper" not in topic_name.lower():
+            return
+
+        self.joint_subscriptions[topic_name] = self.create_subscription(
+            JointState,
+            topic_name,
+            self._make_joint_state_callback(topic_name),
+            50,
+        )
+        self.get_logger().info(f"Subscribed to JointState topic: {topic_name}")
+
+    def _maybe_subscribe_gripper_status(self, topic_name: str) -> None:
+        lowered = topic_name.lower()
+        if topic_name in self.gripper_status_subscriptions:
+            return
+        if "gripper" not in lowered:
+            return
+        if "status" not in lowered and "_action" not in lowered:
+            return
+
+        self.gripper_status_subscriptions[topic_name] = self.create_subscription(
+            GoalStatusArray,
+            topic_name,
+            self._make_gripper_status_callback(topic_name),
+            20,
+        )
+        self.get_logger().info(f"Subscribed to gripper action status topic: {topic_name}")
 
     def _make_joint_state_callback(self, topic_name: str):
         def _callback(msg: JointState) -> None:
@@ -122,6 +150,17 @@ class RobotMotionMonitor(Node):
 
             self.topic_joint_states[topic_name] = (now, positions, velocities)
             self.refresh_joint_state_snapshot(now)
+
+        return _callback
+
+    def _make_gripper_status_callback(self, topic_name: str):
+        def _callback(msg: GoalStatusArray) -> None:
+            now = time.monotonic()
+            active = any(status.status in (1, 2, 3) for status in msg.status_list)
+            self.last_gripper_action_time = now
+            self.last_gripper_action_active = active
+            if active:
+                self.get_logger().info(f"Active gripper action detected on: {topic_name}")
 
         return _callback
 
@@ -175,9 +214,17 @@ class RobotMotionMonitor(Node):
         return bool(arm_position_rates) and velocity_norm(arm_position_rates) > ARM_POSITION_DELTA_THRESHOLD
 
     def compute_gripper_moving(self) -> bool:
+        now = time.monotonic()
+        if (
+            self.last_gripper_action_time is not None
+            and self.last_gripper_action_active
+            and (now - self.last_gripper_action_time) <= ACTION_STATUS_STALE_AFTER_SEC
+        ):
+            return True
+
         if not self.last_joint_names or self.last_joint_msg_time is None:
             return False
-        if time.monotonic() - self.last_joint_msg_time > TOPIC_STALE_AFTER_SEC:
+        if now - self.last_joint_msg_time > TOPIC_STALE_AFTER_SEC:
             return False
 
         gripper_names = [name for name in self.last_joint_names if looks_like_gripper_joint(name)]
@@ -231,15 +278,17 @@ class RobotMotionMonitor(Node):
         arm_names = [name for name in self.last_joint_names if not looks_like_gripper_joint(name)]
 
         self.get_logger().info(
-            "topics=%s joint_count=%d arm_joints=%s gripper_joints=%s joint_age=%s arm_moving=%d gripper_moving=%d"
+            "topics=%s gripper_status_topics=%s joint_count=%d arm_joints=%s gripper_joints=%s joint_age=%s arm_moving=%d gripper_moving=%d gripper_action_active=%d"
             % (
                 ",".join(sorted(self.joint_subscriptions.keys())) or "none",
+                ",".join(sorted(self.gripper_status_subscriptions.keys())) or "none",
                 len(self.last_joint_names),
                 ",".join(arm_names[:8]) or "none",
                 ",".join(gripper_names[:8]) or "none",
                 joint_age,
                 int(arm_moving),
                 int(gripper_moving),
+                int(self.last_gripper_action_active),
             )
         )
 
