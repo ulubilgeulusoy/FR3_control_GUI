@@ -419,6 +419,43 @@ This keeps the LSL publisher itself simple:
 - `robot_state_api.py` stores explicit state
 - `robot_state_publisher.py` publishes the LSL stream
 
+### Current LSL Status
+
+Current observed behavior of the LSL stream:
+
+- `kt_active` works for kinesthetic teaching
+- kinesthetic arm-motion detection works when the kinesthetic stack brings up ROS joint-state topics
+- kinesthetic gripper-state handling is partially working through ROS and gripper action status observation
+- `visual_servo_active` works from the tracked visual-servo PID/process state
+- true arm-motion detection for visual servo is still not implemented in a reliable way
+
+Why visual-servo arm motion is still unresolved:
+
+- the visual-servo application moves the robot through ViSP + `libfranka`
+- in the tested setup, visual servo does not publish usable ROS joint-state topics for this repo to observe
+- because of that, the current ROS-based `robot_motion_monitor.py` cannot infer `arm_moving` during visual servo
+
+Things that were tried and did not work:
+
+- inferring visual-servo arm motion from ROS `/joint_states`
+  - no usable motion messages were present during visual servo
+- inferring motion from visual-servo stdout/log text
+  - this was noisy and produced incorrect spikes instead of true motion state
+- using unrelated Python Franka packages as a direct state backend
+  - the installed `franky` package on the robot computer did not expose a robot API
+- launching a separate external `libfranka` sidecar client
+  - this interfered with the real visual-servo process and caused `franka::NetworkException` / connection loss
+
+Recommended next step for visual servo:
+
+- update the visual-servo application or its wrapper so the same process that already owns `libfranka` also emits `arm_moving`
+
+That is the safest correct approach because:
+
+- it does not depend on ROS topics that are missing during visual servo
+- it does not require a second competing `libfranka` connection
+- it lets the process that already knows the true robot motion publish the state directly into `robot_state_api.py`
+
 ### Stop / Kill Buttons
 
 - `Stop` sends `SIGTERM` to the PID in the corresponding `/tmp/*.pid`
