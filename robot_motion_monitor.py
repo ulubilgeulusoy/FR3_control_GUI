@@ -71,7 +71,7 @@ class RobotMotionMonitor(Node):
     def __init__(self) -> None:
         super().__init__("robot_motion_monitor")
 
-        self.subscriptions: Dict[str, object] = {}
+        self.joint_subscriptions: Dict[str, object] = {}
         self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
         self.last_positions: Dict[str, float] = {}
         self.prev_positions: Dict[str, float] = {}
@@ -93,12 +93,12 @@ class RobotMotionMonitor(Node):
         for topic_name, topic_types in topic_names_and_types:
             if "sensor_msgs/msg/JointState" not in topic_types:
                 continue
-            if topic_name in self.subscriptions:
+            if topic_name in self.joint_subscriptions:
                 continue
             if "joint" not in topic_name.lower() and "gripper" not in topic_name.lower():
                 continue
 
-            self.subscriptions[topic_name] = self.create_subscription(
+            self.joint_subscriptions[topic_name] = self.create_subscription(
                 JointState,
                 topic_name,
                 self._make_joint_state_callback(topic_name),
