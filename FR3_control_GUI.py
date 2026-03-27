@@ -757,12 +757,16 @@ class FR3LauncherApp:
 
     def _build_robot_motion_monitor_start_command(self):
         monitor_path = shlex.quote(self.robot_motion_monitor_path.get().strip())
+        robot_ip = shlex.quote(self.robot_ip.get().strip())
 
         return (
             "bash -lc '"
             f"PID_FILE={shlex.quote(self.robot_motion_monitor_pid_file)}; "
             f"LOG_FILE={shlex.quote(self.robot_motion_monitor_log_file)}; "
             f"SCRIPT={monitor_path}; "
+            f"FR3_ROBOT_IP={robot_ip}; "
+            f"FR3_VISUAL_SERVO_PID_FILE={shlex.quote(self.visual_pid_file)}; "
+            "export FR3_ROBOT_IP FR3_VISUAL_SERVO_PID_FILE; "
             "if [ ! -f \"$SCRIPT\" ]; then "
             'echo "ROBOT_MOTION_MONITOR_SCRIPT_NOT_FOUND"; '
             "exit 1; "
