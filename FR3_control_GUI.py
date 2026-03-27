@@ -759,14 +759,25 @@ class FR3LauncherApp:
             "ps -ef | grep -E \"run_gui.sh|franka_teach|kinesthetic\" | grep -v grep || echo \"none\"; "
             'echo "--- Matching visual-servo processes ---"; '
             "ps -ef | grep -E \"servoFrankaIBVS_combined|run_visual_servo_combined.sh|visual_servo\" | grep -v grep || echo \"none\"; "
-            'echo "--- ROS topics with joint in name ---"; '
-            "(ros2 topic list 2>/dev/null | grep joint) || echo \"No joint topics found\"; "
-            'for TOPIC in /joint_states /franka/joint_states /franka_gripper/joint_states /fr3_gripper/joint_states; do '
+            'echo "--- ROS nodes ---"; '
+            "ros2 node list 2>/dev/null || echo \"No ROS nodes found\"; "
+            'echo "--- ROS topics with types ---"; '
+            "ros2 topic list -t 2>/dev/null || echo \"No ROS topics found\"; "
+            'echo "--- Joint-related topics discovered dynamically ---"; '
+            "JOINT_TOPICS=$(ros2 topic list 2>/dev/null | grep -E \"joint|gripper\" || true); "
+            'if [ -z \"$JOINT_TOPICS\" ]; then '
+            'echo \"No joint topics found\"; '
+            "else "
+            'printf \"%s\n\" \"$JOINT_TOPICS\"; '
+            'for TOPIC in $JOINT_TOPICS; do '
             'echo \"--- Topic info: $TOPIC ---\"; '
             'ros2 topic info \"$TOPIC\" 2>/dev/null || echo \"missing\"; '
             'echo \"--- Topic sample: $TOPIC ---\"; '
             'timeout 3s ros2 topic echo --once \"$TOPIC\" 2>/dev/null || echo \"no sample\"; '
             'done; '
+            "fi; "
+            f'echo "--- Robot State Publisher Log ---"; '
+            f'tail -n 40 {self.robot_state_log_file} 2>/dev/null || echo "No robot state publisher log"; '
             "'"
         )
         self.run_ssh_command_async(cmd, "Debug LSL Status")
