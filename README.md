@@ -2,6 +2,26 @@
 
 Windows Tkinter GUI to connect to a remote Ubuntu machine and launch FR3 visual-servo and kinesthetic-teaching GUIs through `WSL + ssh -Y` with X11 forwarding.
 
+## Validated Environment
+
+This launcher is currently documented and validated for a remote FR3 machine running a Jazzy-based stack.
+
+- Local launcher machine: Windows with WSL + X11 server
+- Remote OS: Ubuntu 24.04 LTS
+- Remote ROS distro: ROS 2 Jazzy
+- Robot: Franka Research 3 (FR3)
+- Robot system version used during validation: 5.7.2
+- `franka_ros2` workspace version used during validation: `v3.1.1`
+- `libfranka` version used during validation: `0.15.3`
+- `franka_description` version used during validation: `1.6.1`
+- Remote kernel used during validation: `6.12.79-rt17`
+
+Important notes:
+- This repo now launches remote tools with `/opt/ros/jazzy/setup.bash`.
+- The visual-servo and kinesthetic repositories on the remote machine are expected to be Jazzy-compatible as well.
+- The Franka stack versions above matter for an FR3 on system version `5.7.2`.
+- A realtime kernel is recommended on the remote Ubuntu machine for smoother robot behavior.
+
 ## What This App Does
 
 `FR3_control_GUI.py` uses two paths:
