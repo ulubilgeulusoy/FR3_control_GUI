@@ -857,7 +857,7 @@ class FR3LauncherApp:
             "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
             "fi; "
             "fi; "
-            "source /opt/ros/humble/setup.bash && "
+            "source /opt/ros/jazzy/setup.bash && "
             "nohup python3 \"$SCRIPT\" > \"$LOG_FILE\" 2>&1 < /dev/null & "
             "PID=$!; "
             "echo \"$PID\" > \"$PID_FILE\"; "
@@ -913,7 +913,7 @@ class FR3LauncherApp:
             "printf \"%s\n\" \"$REMAINING\" | xargs -r kill -KILL 2>/dev/null || true; "
             "fi; "
             "fi; "
-            "source /opt/ros/humble/setup.bash && "
+            "source /opt/ros/jazzy/setup.bash && "
             "nohup python3 \"$SCRIPT\" > \"$LOG_FILE\" 2>&1 < /dev/null & "
             "PID=$!; "
             "echo \"$PID\" > \"$PID_FILE\"; "
@@ -1011,8 +1011,8 @@ class FR3LauncherApp:
             return
 
         remote_cmd = (
-            "source /opt/ros/humble/setup.bash && "
-            "export LD_LIBRARY_PATH=/opt/ros/humble/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH && "
+            "source /opt/ros/jazzy/setup.bash && "
+            "export LD_LIBRARY_PATH=/opt/ros/jazzy/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH && "
             f"cd {shlex.quote(self.visual_servo_dir.get().strip())} && "
             f"export MODE={shlex.quote(self.visual_mode.get().strip())} && "
             f"echo $$ > {shlex.quote(self.visual_pid_file)} && "
@@ -1051,7 +1051,7 @@ class FR3LauncherApp:
             return
 
         remote_cmd = (
-            "source /opt/ros/humble/setup.bash && "
+            "source /opt/ros/jazzy/setup.bash && "
             f"cd {shlex.quote(self.kinesthetic_dir.get().strip())} && "
             f"echo $$ > {shlex.quote(self.kinesthetic_pid_file)} && "
             "exec ./run_gui.sh"
@@ -1122,7 +1122,7 @@ class FR3LauncherApp:
     def debug_lsl_status(self):
         cmd = (
             "bash -lc '"
-            "source /opt/ros/humble/setup.bash >/dev/null 2>&1 || true; "
+            "source /opt/ros/jazzy/setup.bash >/dev/null 2>&1 || true; "
             f'echo "--- Kinesthetic PID file ---"; '
             f'if [ -f {shlex.quote(self.kinesthetic_pid_file)} ]; then cat {shlex.quote(self.kinesthetic_pid_file)}; else echo "missing"; fi; '
             f'echo "--- Visual PID file ---"; '

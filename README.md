@@ -120,7 +120,7 @@ sudo apt install -y openssh-client sshpass x11-apps
 - ROS environment available at:
 
 ```bash
-/opt/ros/humble/setup.bash
+/opt/ros/jazzy/setup.bash
 ```
 
 - Python packages for the publisher available on the remote machine:
@@ -273,7 +273,7 @@ Useful checks:
 
 The app starts visual servoing by running, on the remote Ubuntu machine:
 
-- `source /opt/ros/humble/setup.bash`
+- `source /opt/ros/jazzy/setup.bash`
 - exports ROS library path additions
 - changes into the visual servo repository
 - exports `MODE`
@@ -354,7 +354,7 @@ python FR3_control_GUI.py
 
 Launches from WSL using `sshpass ssh -Y` and runs remotely:
 
-- `source /opt/ros/humble/setup.bash`
+- `source /opt/ros/jazzy/setup.bash`
 - set ROS library path extension
 - `cd <visual_servo_repo>`
 - `export MODE=<1|2>`
@@ -365,7 +365,7 @@ Launches from WSL using `sshpass ssh -Y` and runs remotely:
 
 Launches from WSL using `sshpass ssh -Y` and runs remotely:
 
-- `source /opt/ros/humble/setup.bash`
+- `source /opt/ros/jazzy/setup.bash`
 - `cd <kinesthetic_repo>`
 - write PID to `/tmp/fr3_kinesthetic_gui.pid`
 - `exec ./run_gui.sh`
@@ -376,7 +376,7 @@ When you enter the control screen with both SSH and X11 ready, the GUI runs this
 
 - checks whether `/tmp/fr3_robot_state_publisher.pid` already points to a live process
 - removes stale PID files automatically
-- sources ROS 2 from `/opt/ros/humble/setup.bash`
+- sources ROS 2 from `/opt/ros/jazzy/setup.bash`
 - starts `python3 <robot_state_publisher.py>` with `nohup`
 - writes logs to `/tmp/fr3_robot_state_publisher.log`
 
