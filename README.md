@@ -486,7 +486,7 @@ Reads:
 
 ## Defaults in Code
 
-- Host: `192.168.0.121`
+- Host: `192.168.0.242`
 - Port: `22`
 - User: `parc`
 - WSL distro: `Ubuntu`

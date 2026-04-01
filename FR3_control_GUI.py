@@ -81,7 +81,7 @@ class FR3LauncherApp:
         self.xlaunch_config_path = os.path.join(self.repo_dir, "config.xlaunch")
 
         # SSH fields
-        self.ssh_host = tk.StringVar(value="192.168.0.121")
+        self.ssh_host = tk.StringVar(value="192.168.0.242")
         self.ssh_port = tk.StringVar(value="22")
         self.ssh_user = tk.StringVar(value="parc")
         self.ssh_password = tk.StringVar(value="")
@@ -117,8 +117,12 @@ class FR3LauncherApp:
         self.x11_status_text = tk.StringVar(value="X11 inactive")
         self.continue_button = None
 
-        self.login_frame = ttk.Frame(self.root, padding=15)
-        self.control_frame = ttk.Frame(self.root, padding=15)
+        self._active_scroll_canvas = None
+        self.login_view, self.login_canvas, self.login_frame = self._create_scrollable_screen()
+        self.control_view, self.control_canvas, self.control_frame = self._create_scrollable_screen()
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_mousewheel_linux, add="+")
+        self.root.bind_all("<Button-5>", self._on_mousewheel_linux, add="+")
 
         self.visual_wsl_proc = None
         self.kinesthetic_wsl_proc = None
@@ -156,6 +160,58 @@ class FR3LauncherApp:
             "startupinfo": startupinfo,
             "creationflags": WINDOWS_CREATE_NO_WINDOW,
         }
+
+    def _create_scrollable_screen(self):
+        container = ttk.Frame(self.root)
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        content = ttk.Frame(canvas, padding=15)
+
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        content.bind(
+            "<Configure>",
+            lambda _event, c=canvas: c.configure(scrollregion=c.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event, c=canvas, w=window_id: c.itemconfigure(w, width=event.width),
+        )
+
+        for widget in (container, canvas, content):
+            widget.bind("<Enter>", lambda _event, c=canvas: self._set_active_scroll_canvas(c), add="+")
+
+        return container, canvas, content
+
+    def _set_active_scroll_canvas(self, canvas):
+        self._active_scroll_canvas = canvas
+
+    def _scroll_active_canvas(self, units):
+        canvas = self._active_scroll_canvas
+        if canvas is None:
+            return
+        if canvas.bbox("all") is None:
+            return
+        canvas.yview_scroll(units, "units")
+
+    def _on_mousewheel(self, event):
+        if self._active_scroll_canvas is None:
+            return
+        delta = event.delta
+        if delta == 0:
+            return
+        step = -1 if delta > 0 else 1
+        self._scroll_active_canvas(step)
+
+    def _on_mousewheel_linux(self, event):
+        if event.num == 4:
+            self._scroll_active_canvas(-1)
+        elif event.num == 5:
+            self._scroll_active_canvas(1)
 
     def _build_login_frame(self):
         frame = self.login_frame
@@ -291,13 +347,17 @@ class FR3LauncherApp:
         self.log_text.pack(fill="both", expand=True)
 
     def show_login_frame(self):
-        self.control_frame.pack_forget()
-        self.login_frame.pack(fill="both", expand=True)
+        self.control_view.pack_forget()
+        self.login_view.pack(fill="both", expand=True)
+        self.login_canvas.yview_moveto(0)
+        self._set_active_scroll_canvas(self.login_canvas)
         self.refresh_x11_status()
 
     def show_control_frame(self):
-        self.login_frame.pack_forget()
-        self.control_frame.pack(fill="both", expand=True)
+        self.login_view.pack_forget()
+        self.control_view.pack(fill="both", expand=True)
+        self.control_canvas.yview_moveto(0)
+        self._set_active_scroll_canvas(self.control_canvas)
         self.refresh_x11_status()
 
     def append_log(self, text):
