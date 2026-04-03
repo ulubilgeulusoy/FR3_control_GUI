@@ -315,15 +315,13 @@ class FR3LauncherApp:
         visual_box.pack(side="left", fill="both", expand=True, padx=(0, 5))
 
         ttk.Button(visual_box, text="Start Visual Servo", command=self.start_visual_servo).pack(fill="x", pady=4)
-        ttk.Button(visual_box, text="Stop Visual Servo", command=self.stop_visual_servo).pack(fill="x", pady=4)
-        ttk.Button(visual_box, text="Kill Visual Servo", command=self.kill_visual_servo).pack(fill="x", pady=4)
+        ttk.Button(visual_box, text="Quit Visual Servo", command=self.kill_visual_servo).pack(fill="x", pady=4)
 
         kin_box = ttk.LabelFrame(button_area, text="Kinesthetic Teaching", padding=12)
         kin_box.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         ttk.Button(kin_box, text="Start Kinesthetic GUI", command=self.start_kinesthetic).pack(fill="x", pady=4)
-        ttk.Button(kin_box, text="Stop Kinesthetic GUI", command=self.stop_kinesthetic).pack(fill="x", pady=4)
-        ttk.Button(kin_box, text="Kill Kinesthetic GUI", command=self.kill_kinesthetic).pack(fill="x", pady=4)
+        ttk.Button(kin_box, text="Quit Kinesthetic GUI", command=self.kill_kinesthetic).pack(fill="x", pady=4)
 
         tools = ttk.Frame(frame)
         tools.pack(fill="x", pady=(0, 10))
