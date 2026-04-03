@@ -116,6 +116,16 @@ class FR3LauncherApp:
         self.status_text = tk.StringVar(value="Not connected")
         self.x11_status_text = tk.StringVar(value="X11 inactive")
         self.continue_button = None
+        self.start_visual_button = None
+        self.quit_visual_button = None
+        self.start_kinesthetic_button = None
+        self.quit_kinesthetic_button = None
+        self.check_status_button = None
+        self.show_logs_button = None
+        self.debug_lsl_button = None
+        self.back_button = None
+        self.disconnect_button = None
+        self.active_app = None
 
         self._active_scroll_canvas = None
         self.login_view, self.login_canvas, self.login_frame = self._create_scrollable_screen()
@@ -314,23 +324,32 @@ class FR3LauncherApp:
         visual_box = ttk.LabelFrame(button_area, text="Visual Servoing", padding=12)
         visual_box.pack(side="left", fill="both", expand=True, padx=(0, 5))
 
-        ttk.Button(visual_box, text="Start Visual Servo", command=self.start_visual_servo).pack(fill="x", pady=4)
-        ttk.Button(visual_box, text="Quit Visual Servo", command=self.kill_visual_servo).pack(fill="x", pady=4)
+        self.start_visual_button = ttk.Button(visual_box, text="Start Visual Servo", command=self.start_visual_servo)
+        self.start_visual_button.pack(fill="x", pady=4)
+        self.quit_visual_button = ttk.Button(visual_box, text="Quit Visual Servo", command=self.kill_visual_servo)
+        self.quit_visual_button.pack(fill="x", pady=4)
 
         kin_box = ttk.LabelFrame(button_area, text="Kinesthetic Teaching", padding=12)
         kin_box.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        ttk.Button(kin_box, text="Start Kinesthetic GUI", command=self.start_kinesthetic).pack(fill="x", pady=4)
-        ttk.Button(kin_box, text="Quit Kinesthetic GUI", command=self.kill_kinesthetic).pack(fill="x", pady=4)
+        self.start_kinesthetic_button = ttk.Button(kin_box, text="Start Kinesthetic GUI", command=self.start_kinesthetic)
+        self.start_kinesthetic_button.pack(fill="x", pady=4)
+        self.quit_kinesthetic_button = ttk.Button(kin_box, text="Quit Kinesthetic GUI", command=self.kill_kinesthetic)
+        self.quit_kinesthetic_button.pack(fill="x", pady=4)
 
         tools = ttk.Frame(frame)
         tools.pack(fill="x", pady=(0, 10))
 
-        ttk.Button(tools, text="Check Remote Status", command=self.check_remote_status).pack(side="left")
-        ttk.Button(tools, text="Show Last Logs", command=self.show_last_logs).pack(side="left", padx=8)
-        ttk.Button(tools, text="Debug LSL Status", command=self.debug_lsl_status).pack(side="left")
-        ttk.Button(tools, text="Back", command=self.show_login_frame).pack(side="right")
-        ttk.Button(tools, text="Disconnect", command=self.disconnect_ssh).pack(side="right", padx=(0, 8))
+        self.check_status_button = ttk.Button(tools, text="Check Remote Status", command=self.check_remote_status)
+        self.check_status_button.pack(side="left")
+        self.show_logs_button = ttk.Button(tools, text="Show Last Logs", command=self.show_last_logs)
+        self.show_logs_button.pack(side="left", padx=8)
+        self.debug_lsl_button = ttk.Button(tools, text="Debug LSL Status", command=self.debug_lsl_status)
+        self.debug_lsl_button.pack(side="left")
+        self.back_button = ttk.Button(tools, text="Back", command=self.show_login_frame)
+        self.back_button.pack(side="right")
+        self.disconnect_button = ttk.Button(tools, text="Disconnect", command=self.disconnect_ssh)
+        self.disconnect_button.pack(side="right", padx=(0, 8))
 
         info = ttk.Label(
             frame,
@@ -343,6 +362,7 @@ class FR3LauncherApp:
 
         self.log_text = scrolledtext.ScrolledText(log_box, wrap="word", height=25)
         self.log_text.pack(fill="both", expand=True)
+        self._set_control_buttons_for_active_app(None)
 
     def show_login_frame(self):
         self.control_view.pack_forget()
@@ -361,6 +381,48 @@ class FR3LauncherApp:
     def append_log(self, text):
         self.log_text.insert("end", text)
         self.log_text.see("end")
+
+    def _set_widget_state(self, widget, enabled):
+        if widget is None:
+            return
+        widget.config(state="normal" if enabled else "disabled")
+
+    def _set_control_buttons_for_active_app(self, app_name):
+        self.active_app = app_name
+
+        if app_name == "visual":
+            self._set_widget_state(self.start_visual_button, False)
+            self._set_widget_state(self.quit_visual_button, True)
+            self._set_widget_state(self.start_kinesthetic_button, False)
+            self._set_widget_state(self.quit_kinesthetic_button, False)
+            self._set_widget_state(self.check_status_button, False)
+            self._set_widget_state(self.show_logs_button, False)
+            self._set_widget_state(self.debug_lsl_button, False)
+            self._set_widget_state(self.back_button, False)
+            self._set_widget_state(self.disconnect_button, False)
+            return
+
+        if app_name == "kinesthetic":
+            self._set_widget_state(self.start_visual_button, False)
+            self._set_widget_state(self.quit_visual_button, False)
+            self._set_widget_state(self.start_kinesthetic_button, False)
+            self._set_widget_state(self.quit_kinesthetic_button, True)
+            self._set_widget_state(self.check_status_button, False)
+            self._set_widget_state(self.show_logs_button, False)
+            self._set_widget_state(self.debug_lsl_button, False)
+            self._set_widget_state(self.back_button, False)
+            self._set_widget_state(self.disconnect_button, False)
+            return
+
+        self._set_widget_state(self.start_visual_button, True)
+        self._set_widget_state(self.quit_visual_button, False)
+        self._set_widget_state(self.start_kinesthetic_button, True)
+        self._set_widget_state(self.quit_kinesthetic_button, False)
+        self._set_widget_state(self.check_status_button, True)
+        self._set_widget_state(self.show_logs_button, True)
+        self._set_widget_state(self.debug_lsl_button, True)
+        self._set_widget_state(self.back_button, True)
+        self._set_widget_state(self.disconnect_button, True)
 
     def run_ssh_command_async(self, command, label=None):
         def worker():
@@ -562,7 +624,7 @@ class FR3LauncherApp:
 
         return ["wsl.exe", "-d", distro, "-e", "bash", "-lc", wsl_script]
 
-    def _launch_wsl_gui_async(self, label, command_list, proc_attr_name):
+    def _launch_wsl_gui_async(self, label, command_list, proc_attr_name, app_name):
         def worker():
             try:
                 existing = getattr(self, proc_attr_name)
@@ -580,6 +642,7 @@ class FR3LauncherApp:
                 )
                 setattr(self, proc_attr_name, proc)
 
+                self.root.after(0, lambda: self._set_control_buttons_for_active_app(app_name))
                 self.root.after(0, lambda: self.append_log(f"[{label}] launched via WSL/X11.\n"))
 
                 for line in proc.stdout:
@@ -593,6 +656,8 @@ class FR3LauncherApp:
                 self.root.after(0, lambda: self.append_log(f"[{label}] launch error: {e}\n"))
             finally:
                 setattr(self, proc_attr_name, None)
+                if self.active_app == app_name:
+                    self.root.after(0, lambda: self._set_control_buttons_for_active_app(None))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1018,7 +1083,7 @@ class FR3LauncherApp:
         )
 
         cmd = self._build_wsl_ssh_gui_command(remote_cmd)
-        self._launch_wsl_gui_async("Start Visual Servo", cmd, "visual_wsl_proc")
+        self._launch_wsl_gui_async("Start Visual Servo", cmd, "visual_wsl_proc", "visual")
 
     def stop_visual_servo(self):
         cmd = self._build_remote_signal_command(
@@ -1056,7 +1121,7 @@ class FR3LauncherApp:
         )
 
         cmd = self._build_wsl_ssh_gui_command(remote_cmd)
-        self._launch_wsl_gui_async("Start Kinesthetic", cmd, "kinesthetic_wsl_proc")
+        self._launch_wsl_gui_async("Start Kinesthetic", cmd, "kinesthetic_wsl_proc", "kinesthetic")
 
     def stop_kinesthetic(self):
         cmd = self._build_remote_signal_command(
