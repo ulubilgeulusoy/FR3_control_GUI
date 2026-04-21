@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=FR3 Control GUI
+Comment=Launch the FR3 Control GUI
+Path=/home/parc/FR3_control_GUI
+Exec=python3 FR3_control_GUI.py
+Terminal=false
+Categories=Development;Robotics;
+StartupNotify=true
