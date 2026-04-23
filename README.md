@@ -5,7 +5,7 @@ This repository contains a small local control/monitoring toolkit for an FR3 set
 - `FR3_control_GUI.py`: Tkinter launcher for starting and stopping the local visual-servo and kinesthetic-teaching applications
 - `robot_state_api.py`: local HTTP API for robot-state flags
 - `robot_motion_monitor.py`: ROS 2 sidecar that detects arm/gripper motion and pushes state into the API
-- `robot_state_publisher.py`: ROS 2 + LSL publisher that exposes four binary robot-state channels
+- `robot_state_publisher.py`: ROS 2 + LSL publisher that exposes six binary robot-state channels
 
 The code is local-first. The GUI launches processes on the same Linux machine that has the robot software installed.
 
@@ -101,6 +101,8 @@ State fields:
 
 - `visual_servo_active`
 - `kt_active`
+- `teaching_active`
+- `running_active`
 - `arm_moving`
 - `gripper_moving`
 
@@ -129,7 +131,7 @@ Current behavior:
 
 - posts to `http://127.0.0.1:8765/state`
 - only sends fields that are currently active, with a short TTL
-- uses joint velocity thresholds first, then falls back to position deltas
+- uses joint velocity thresholds first, then falls back to position deltas only when velocity data is unavailable
 - logs periodic diagnostics about discovered topics and inferred motion state
 
 Python dependencies for this script come from the ROS 2 environment, not from `requirements.txt`.
@@ -140,19 +142,26 @@ Python dependencies for this script come from the ROS 2 environment, not from `r
 
 - stream name: `FR3_State`
 - stream type: `RobotState`
-- channel count: `4`
+- channel count: `6`
 - nominal rate: `50 Hz`
 - channel labels:
   - `visual_servo_active`
   - `kt_active`
+  - `teaching_active`
+  - `running_active`
   - `arm_moving`
   - `gripper_moving`
 
 It combines:
 
 - local process matching from `ps`
-- motion inferred from `/joint_states`
+- motion inferred from robot topics and explicit state updates
 - state data from `robot_state_api.py` when available
+
+Current integration notes:
+
+- `teaching_active` and `running_active` are intended to come from explicit updates produced by the kinesthetic GUI workflow.
+- visual-servo `arm_moving` can be published directly by the C++ visual-servo controller into `robot_state_api.py`, which is more reliable than ROS-side inference for the ViSP/libfranka path.
 
 This script requires ROS 2 Python packages and `pylsl`.
 
@@ -215,7 +224,7 @@ On Linux, `FR3 Control GUI.desktop` can be used as a desktop launcher. Its curre
 
 ## Notes and Limitations
 
-- Closing the Tkinter window does not stop child processes.
+- Opening and closing the Tkinter window now performs aggressive cleanup of the managed background processes used by this toolkit.
 - Stop/kill behavior depends on the PID file matching the process that should be signaled.
 - The GUI stores the shell PID just before `exec`; stale PID files are removed when detected.
 - `check_local_status()` matches processes using:
@@ -223,5 +232,5 @@ On Linux, `FR3 Control GUI.desktop` can be used as a desktop launcher. Its curre
   - `run_visual_servo_combined.sh`
   - `franka_teach`
   - `run_gui.sh`
-- `robot_state_publisher.py` currently subscribes only to `/joint_states`, while `robot_motion_monitor.py` discovers joint-state topics dynamically.
+- `robot_state_publisher.py` now discovers `JointState` topics dynamically instead of relying on a single hard-coded `/joint_states` subscription.
 - `config.xlaunch` is present but unused by the current Python code.
