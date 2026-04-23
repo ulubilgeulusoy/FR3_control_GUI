@@ -188,13 +188,19 @@ class RobotMotionMonitor(Node):
             return False
 
         arm_vels: List[float] = []
+        has_velocity_data = False
         for name in self.last_joint_names:
             if looks_like_gripper_joint(name):
                 continue
-            arm_vels.append(float(self.last_velocities.get(name, 0.0)))
+            if name in self.last_velocities:
+                has_velocity_data = True
+                arm_vels.append(float(self.last_velocities[name]))
 
         if arm_vels and velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD:
             return True
+
+        if has_velocity_data:
+            return False
 
         if not self.prev_positions or self.prev_joint_msg_time is None:
             return False
@@ -231,9 +237,15 @@ class RobotMotionMonitor(Node):
         if not gripper_names:
             return False
 
+        has_velocity_data = False
         for name in gripper_names:
+            if name in self.last_velocities:
+                has_velocity_data = True
             if abs(float(self.last_velocities.get(name, 0.0))) > GRIPPER_VELOCITY_THRESHOLD:
                 return True
+
+        if has_velocity_data:
+            return False
 
         if not self.prev_positions:
             return False

@@ -73,20 +73,6 @@ KT_PATTERNS = [
     r"kinesthetic",
 ]
 
-TEACHING_PATTERNS = [
-    r"franka_teach",
-    r"teach",
-    r"teaching",
-    r"gravity",
-]
-
-RUNNING_PATTERNS = [
-    r"trajectory",
-    r"playback",
-    r"execute",
-    r"running",
-]
-
 # Thresholds for binary movement flags
 ARM_VELOCITY_NORM_THRESHOLD = 0.01      # rad/s norm across non-gripper joints
 GRIPPER_VELOCITY_THRESHOLD = 0.001      # joint velocity threshold
@@ -310,16 +296,23 @@ class RobotStatePublisher(Node):
             return False
 
         arm_vels: List[float] = []
+        has_velocity_data = False
         for name in self.last_joint_names:
             if looks_like_gripper_joint(name):
                 continue
-            arm_vels.append(float(self.last_velocities.get(name, 0.0)))
+            if name in self.last_velocities:
+                has_velocity_data = True
+                arm_vels.append(float(self.last_velocities[name]))
 
         if not arm_vels:
-            return False
+            if has_velocity_data:
+                return False
 
-        if velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD:
+        if arm_vels and velocity_norm(arm_vels) > ARM_VELOCITY_NORM_THRESHOLD:
             return True
+
+        if has_velocity_data:
+            return False
 
         if not self.prev_positions or self.prev_joint_msg_time is None or self.last_joint_msg_time is None:
             return False
@@ -355,10 +348,16 @@ class RobotStatePublisher(Node):
             return False
 
         # Velocity-based check
+        has_velocity_data = False
         for name in gripper_names:
+            if name in self.last_velocities:
+                has_velocity_data = True
             vel = abs(float(self.last_velocities.get(name, 0.0)))
             if vel > GRIPPER_VELOCITY_THRESHOLD:
                 return True
+
+        if has_velocity_data:
+            return False
 
         if not self.prev_positions:
             return False
@@ -376,8 +375,8 @@ class RobotStatePublisher(Node):
 
         visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
         kt_raw = process_matches_any(KT_PATTERNS)
-        teaching_raw = process_matches_any(TEACHING_PATTERNS)
-        running_raw = process_matches_any(RUNNING_PATTERNS)
+        teaching_raw = False
+        running_raw = False
         arm_moving_raw = self.compute_arm_moving_raw()
         gripper_moving_raw = self.compute_gripper_moving_raw()
 
