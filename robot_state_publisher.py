@@ -7,12 +7,16 @@ Publishes a simple binary robot-state LSL stream from the Ubuntu robot computer.
 Channels:
     0: visual_servo_active
     1: kt_active
-    2: arm_moving
-    3: gripper_moving
+    2: teaching_active
+    3: running_active
+    4: arm_moving
+    5: gripper_moving
 
 Current logic:
 - visual_servo_active: 1 if a matching visual-servo process is running
 - kt_active: 1 if a matching kinesthetic-teaching process is running
+- teaching_active: 1 if a matching teaching/teach-mode process is running
+- running_active: 1 if a matching trajectory-run/playback process is running
 - arm_moving: 1 if robot joint velocity norm is above threshold
 - gripper_moving: 1 if gripper joint velocity/position change is above threshold
 
@@ -32,7 +36,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -59,11 +63,28 @@ VISUAL_SERVO_PATTERNS = [
     r"run_visual_servo_combined\.sh",
     r"FR3_visual_servo_examples",
     r"visual_servo",
+    r"servoFrankaIBVS_combined",
 ]
 
 KT_PATTERNS = [
     r"run_gui\.sh",
     r"franka_kinesthetic_teaching_GUI",
+    r"franka_teach",
+    r"kinesthetic",
+]
+
+TEACHING_PATTERNS = [
+    r"franka_teach",
+    r"teach",
+    r"teaching",
+    r"gravity",
+]
+
+RUNNING_PATTERNS = [
+    r"trajectory",
+    r"playback",
+    r"execute",
+    r"running",
 ]
 
 # Thresholds for binary movement flags
@@ -178,12 +199,9 @@ class RobotStatePublisher(Node):
     def __init__(self) -> None:
         super().__init__("robot_state_publisher")
 
-        self.subscription = self.create_subscription(
-            JointState,
-            "/joint_states",
-            self.joint_state_callback,
-            50,
-        )
+        self.joint_subscriptions: Dict[str, object] = {}
+        self.topic_joint_states: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
+        self.discovery_timer = self.create_timer(1.0, self.discover_joint_state_topics)
 
         # Last observed joint info
         self.last_joint_names: List[str] = []
@@ -196,6 +214,8 @@ class RobotStatePublisher(Node):
         # Debounced states
         self.visual_servo_flag = DebouncedFlag()
         self.kt_flag = DebouncedFlag()
+        self.teaching_flag = DebouncedFlag()
+        self.running_flag = DebouncedFlag()
         self.arm_moving_flag = DebouncedFlag()
         self.gripper_moving_flag = DebouncedFlag()
 
@@ -203,7 +223,7 @@ class RobotStatePublisher(Node):
         info = StreamInfo(
             STREAM_NAME,
             STREAM_TYPE,
-            4,                 # 4 binary channels
+            6,                 # 6 binary channels
             PUBLISH_RATE_HZ,   # nominal sampling rate
             "int32",
             STREAM_UID,
@@ -213,6 +233,8 @@ class RobotStatePublisher(Node):
         for label in [
             "visual_servo_active",
             "kt_active",
+            "teaching_active",
+            "running_active",
             "arm_moving",
             "gripper_moving",
         ]:
@@ -227,23 +249,55 @@ class RobotStatePublisher(Node):
 
         self.get_logger().info("robot_state_publisher started.")
         self.get_logger().info(f"Publishing LSL stream: {STREAM_NAME}")
+        self.discover_joint_state_topics()
 
-    def joint_state_callback(self, msg: JointState) -> None:
-        now = time.monotonic()
+    def discover_joint_state_topics(self) -> None:
+        topic_names_and_types = self.get_topic_names_and_types()
+        for topic_name, topic_types in topic_names_and_types:
+            if "sensor_msgs/msg/JointState" not in topic_types:
+                continue
+            if topic_name in self.joint_subscriptions:
+                continue
+            self.joint_subscriptions[topic_name] = self.create_subscription(
+                JointState,
+                topic_name,
+                self._make_joint_state_callback(topic_name),
+                50,
+            )
+            self.get_logger().info(f"Subscribed to JointState topic: {topic_name}")
+
+    def _make_joint_state_callback(self, topic_name: str):
+        def _callback(msg: JointState) -> None:
+            now = time.monotonic()
+            current_positions: Dict[str, float] = {}
+            current_velocities: Dict[str, float] = {}
+
+            for i, name in enumerate(msg.name):
+                if i < len(msg.position):
+                    current_positions[name] = msg.position[i]
+                if i < len(msg.velocity):
+                    current_velocities[name] = msg.velocity[i]
+
+            self.topic_joint_states[topic_name] = (now, current_positions, current_velocities)
+            self.refresh_joint_state_snapshot(now)
+
+        return _callback
+
+    def refresh_joint_state_snapshot(self, now: float) -> None:
         current_positions: Dict[str, float] = {}
         current_velocities: Dict[str, float] = {}
 
-        for i, name in enumerate(msg.name):
-            if i < len(msg.position):
-                current_positions[name] = msg.position[i]
-            if i < len(msg.velocity):
-                current_velocities[name] = msg.velocity[i]
+        for stamp, positions, velocities in self.topic_joint_states.values():
+            if now - stamp > 1.0:
+                continue
+            current_positions.update(positions)
+            current_velocities.update(velocities)
 
         self.prev_positions = self.last_positions.copy()
         self.prev_joint_msg_time = self.last_joint_msg_time
         self.last_joint_msg_time = now
 
-        self.last_joint_names = list(msg.name)
+        self.last_joint_names = list(current_positions.keys())
         self.last_positions = current_positions
         self.last_velocities = current_velocities
 
@@ -322,23 +376,31 @@ class RobotStatePublisher(Node):
 
         visual_servo_raw = process_matches_any(VISUAL_SERVO_PATTERNS)
         kt_raw = process_matches_any(KT_PATTERNS)
+        teaching_raw = process_matches_any(TEACHING_PATTERNS)
+        running_raw = process_matches_any(RUNNING_PATTERNS)
         arm_moving_raw = self.compute_arm_moving_raw()
         gripper_moving_raw = self.compute_gripper_moving_raw()
 
         if api_state is not None:
             visual_servo_raw = visual_servo_raw or bool(api_state.get("visual_servo_active", 0))
             kt_raw = kt_raw or bool(api_state.get("kt_active", 0))
+            teaching_raw = teaching_raw or bool(api_state.get("teaching_active", 0))
+            running_raw = running_raw or bool(api_state.get("running_active", 0))
             arm_moving_raw = arm_moving_raw or bool(api_state.get("arm_moving", 0))
             gripper_moving_raw = gripper_moving_raw or bool(api_state.get("gripper_moving", 0))
 
         visual_servo_active = self.visual_servo_flag.update(visual_servo_raw)
         kt_active = self.kt_flag.update(kt_raw)
+        teaching_active = self.teaching_flag.update(teaching_raw)
+        running_active = self.running_flag.update(running_raw)
         arm_moving = self.arm_moving_flag.update(arm_moving_raw)
         gripper_moving = self.gripper_moving_flag.update(gripper_moving_raw)
 
         sample = [
             int(visual_servo_active),
             int(kt_active),
+            int(teaching_active),
+            int(running_active),
             int(arm_moving),
             int(gripper_moving),
         ]

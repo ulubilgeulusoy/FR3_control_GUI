@@ -44,6 +44,8 @@ PORT = int(os.environ.get("FR3_STATE_API_PORT", "8765"))
 STATE_FIELDS = (
     "visual_servo_active",
     "kt_active",
+    "teaching_active",
+    "running_active",
     "arm_moving",
     "gripper_moving",
 )
