@@ -234,3 +234,8 @@ On Linux, `FR3 Control GUI.desktop` can be used as a desktop launcher. Its curre
   - `run_gui.sh`
 - `robot_state_publisher.py` now discovers `JointState` topics dynamically instead of relying on a single hard-coded `/joint_states` subscription.
 - `config.xlaunch` is present but unused by the current Python code.
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+
+This project depends on third-party packages and system tools with their own licenses. Review those licenses before redistributing a packaged application or bundled environment.
