@@ -11,9 +11,7 @@ This launcher is currently documented and validated for a remote FR3 machine run
 - Remote ROS distro: ROS 2 Jazzy
 - Robot: Franka Research 3 (FR3)
 - Robot system version used during validation: 5.7.2
-- `franka_ros2` workspace version used during validation: `v3.1.1`
 - `libfranka` version used during validation: `0.15.3`
-- `franka_description` version used during validation: `1.6.1`
 - Remote kernel used during validation: `6.12.79-rt17`
 
 Important notes:
