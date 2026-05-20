@@ -2,6 +2,16 @@
 
 Windows Tkinter GUI to connect to a remote Ubuntu machine and launch FR3 visual-servo and kinesthetic-teaching GUIs through `WSL + ssh -Y` with X11 forwarding.
 
+## Branch Matrix
+
+| Branch | ROS 2 | Remote Control | LSL | License |
+| --- | --- | --- | --- | --- |
+| [`main`](https://github.com/ulubilgeulusoy/FR3_control_GUI/tree/main) | ![ROS 2 Jazzy](https://img.shields.io/badge/ROS%202-Jazzy-0A7EA4) | ![Remote Control](https://img.shields.io/badge/Remote-Control-2E8B57) | ![LSL Enabled](https://img.shields.io/badge/LSL-Enabled-2E8B57) | ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue) |
+| [`FR3_Control_Jazzy`](https://github.com/ulubilgeulusoy/FR3_control_GUI/tree/FR3_Control_Jazzy) | ![ROS 2 Jazzy](https://img.shields.io/badge/ROS%202-Jazzy-0A7EA4) | ![Remote Control](https://img.shields.io/badge/Remote-Control-2E8B57) | ![LSL Enabled](https://img.shields.io/badge/LSL-Enabled-2E8B57) | ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue) |
+| [`FR3_Control_Humble`](https://github.com/ulubilgeulusoy/FR3_control_GUI/tree/FR3_Control_Humble) | ![ROS 2 Humble](https://img.shields.io/badge/ROS%202-Humble-5C7AEA) | ![Remote Control](https://img.shields.io/badge/Remote-Control-2E8B57) | ![LSL Enabled](https://img.shields.io/badge/LSL-Enabled-2E8B57) | ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue) |
+| [`FR3_Control_without_LSL_Humble`](https://github.com/ulubilgeulusoy/FR3_control_GUI/tree/FR3_Control_without_LSL_Humble) | ![ROS 2 Humble](https://img.shields.io/badge/ROS%202-Humble-5C7AEA) | ![Remote Control](https://img.shields.io/badge/Remote-Control-2E8B57) | ![LSL Disabled](https://img.shields.io/badge/LSL-Disabled-8B0000) | ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue) |
+| [`FR3_Control_Humble_without_remote_control`](https://github.com/ulubilgeulusoy/FR3_control_GUI/tree/FR3_Control_Humble_without_remote_control) | ![ROS 2 Humble](https://img.shields.io/badge/ROS%202-Humble-5C7AEA) | ![Remote Control Disabled](https://img.shields.io/badge/Remote-Control%20Disabled-8B0000) | ![LSL Enabled](https://img.shields.io/badge/LSL-Enabled-2E8B57) | ![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue) |
+
 ## Validated Environment
 
 This launcher is currently documented and validated for a remote FR3 machine running a Jazzy-based stack.
