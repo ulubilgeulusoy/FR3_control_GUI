@@ -382,6 +382,12 @@ Reads:
 - `Disconnect` closes the Paramiko SSH session
 - closing the window disconnects the Paramiko SSH session only and does not automatically stop remote processes
 
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+
+This project depends on third-party packages and system tools with their own licenses. Review those licenses before redistributing a packaged application or bundled environment.
+
 ## Defaults in Code
 
 - Host: `192.168.0.121`
