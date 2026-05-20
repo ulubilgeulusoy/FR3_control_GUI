@@ -9,6 +9,17 @@ This repository contains a small local control/monitoring toolkit for an FR3 set
 
 The code is local-first. The GUI launches processes on the same Linux machine that has the robot software installed.
 
+## Validated Environment
+
+This launcher is currently documented and validated for a local FR3 machine setup running a Humble-based stack.
+
+- Local launcher machine: Ubuntu 22.04.5 LTS
+- Local ROS distro: ROS 2 Humble
+- Robot: Franka Research 3 (FR3)
+- Robot system version used during validation: 5.7.2
+- `libfranka` version used during validation: `0.15.0`
+- Local kernel used during validation: `6.9.0-rt5`
+
 ## Repository Contents
 
 - `FR3_control_GUI.py` - main Tkinter GUI
