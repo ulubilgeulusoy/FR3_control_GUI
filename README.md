@@ -552,3 +552,7 @@ This project depends on third-party packages and system tools with their own lic
 - `Continue` is blocked unless both SSH and X11 are ready.
 - Entering the control screen also assumes the remote machine can run `python3 robot_state_publisher.py` after sourcing ROS 2.
 - Closing the app disconnects the Paramiko SSH client and stops the tracked `robot_state_publisher.py` process, but it does not automatically stop the visual-servo or kinesthetic processes if they are already running.
+
+## AI Assistance Disclosure
+
+This repository was developed with assistance from OpenAI Codex. Codex was used to generate and refine portions of the codebase, documentation, and repository structure.
